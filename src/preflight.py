@@ -1,5 +1,8 @@
 """Module 7b — Startup Preflight Check"""
+import asyncio
+import subprocess
 import sys
+from pathlib import Path
 
 import httpx
 from rich.console import Console
@@ -109,6 +112,7 @@ async def _check_ollama_model() -> tuple[bool, str, str]:
 
 
 async def _check_acestep() -> tuple[bool, str, str]:
+    # Already running?
     try:
         async with httpx.AsyncClient(timeout=5) as client:
             r = await client.get(f"{ACESTEP_HOST}/health")
@@ -117,10 +121,36 @@ async def _check_acestep() -> tuple[bool, str, str]:
     except Exception:
         pass
 
-    fix = (
-        "ACE-Step is not running. Start it with:\n"
-        "  cd ~/ACE-Step && ./start_api_server_macos.sh\n\n"
-        "Wait for: API will be available at: http://127.0.0.1:8001\n"
-        "(First run downloads model weights — ~20-40 GB)"
+    # Try to auto-start it
+    acestep_dir = Path.home() / "ACE-Step"
+    start_script = acestep_dir / "start_api_server_macos.sh"
+
+    if not start_script.exists():
+        return False, "not installed", (
+            "ACE-Step not found. Run ./setup.sh to install it."
+        )
+
+    console.print("  [yellow]→[/yellow] ACE-Step not running — starting it...")
+    subprocess.Popen(
+        ["bash", str(start_script)],
+        cwd=str(acestep_dir),
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
     )
-    return False, "not responding at localhost:8001", fix
+
+    # Wait up to 120s for it to come up (first run downloads weights)
+    console.print("  [yellow]→[/yellow] Waiting for ACE-Step to be ready (first run may download weights)...")
+    for _ in range(120):
+        await asyncio.sleep(1)
+        try:
+            async with httpx.AsyncClient(timeout=2) as client:
+                r = await client.get(f"{ACESTEP_HOST}/health")
+                if r.status_code == 200:
+                    return True, f"auto-started at {ACESTEP_HOST.replace('http://', '')}", ""
+        except Exception:
+            pass
+
+    return False, "failed to start after 120s", (
+        "ACE-Step took too long. Run manually:\n"
+        "  cd ~/ACE-Step && ./start_api_server_macos.sh"
+    )
