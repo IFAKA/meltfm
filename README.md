@@ -1,71 +1,63 @@
-# personal-radio
+# ai-radio
 
-Local AI radio that generates music continuously using ACE-Step + Ollama, tailored to your taste via natural language reactions.
+Local AI radio that generates music continuously using ACE-Step + Ollama, shaped by your taste in plain language.
 
 ## How it works
 
-- You react to tracks in plain language ("more bass", "something darker", "I love this")
-- An LLM (Ollama) translates your taste into music parameters
+- React to tracks in plain language ("more bass", "something darker", "I love this")
+- An LLM (Ollama) translates your reactions into music parameters
 - ACE-Step generates the next track in the background while the current one plays
-- Your taste profile evolves over time — liked, disliked, skipped history + explicit notes
+- Your taste profile evolves over time across as many radio stations as you want
 
 ## Requirements
 
 - macOS Apple Silicon (M1/M2/M3/M4)
-- [Ollama](https://ollama.com/download)
-- [ACE-Step 1.5](https://github.com/ace-step/ACE-Step-1.5)
-- Python 3.12 (for ACE-Step) + Python 3.14 (for this app via uv)
+- [Homebrew](https://brew.sh)
+
+Everything else is installed automatically by `setup.sh`.
 
 ---
 
-## Setup
-
-### 1. Install Ollama
+## Install
 
 ```bash
-brew install ollama
-ollama pull llama3.2:3b
-ollama serve
+git clone https://github.com/IFAKA/ai-radio.git
+cd ai-radio
+./setup.sh
 ```
 
-### 2. Install ACE-Step
+`setup.sh` will automatically:
+- Install `uv` and `python@3.12`
+- Install and start Ollama, pull the LLM model
+- Clone and install ACE-Step with the correct Python version
+- Set up the `radio` shell alias
 
-ACE-Step requires Python 3.11–3.12. If you only have 3.13+:
+---
 
-```bash
-brew install python@3.12
-```
+## Start ACE-Step (one-time, separate terminal)
 
-Then:
-
-```bash
-git clone https://github.com/ace-step/ACE-Step-1.5.git ~/ACE-Step
-cd ~/ACE-Step
-python3.12 -m venv venv
-source venv/bin/activate
-pip install -e .
-```
-
-### 3. Start ACE-Step API server
+ACE-Step runs as its own server. Start it once and leave it running:
 
 ```bash
 cd ~/ACE-Step
 ./start_api_server_macos.sh
 ```
 
-First run downloads model weights (~20–40 GB). Wait until you see:
+**First run downloads model weights (~20–40 GB)** — takes 30–60 min depending on your connection. Wait for:
 
 ```
 API will be available at: http://127.0.0.1:8001
 ```
 
-### 4. Install and run this app
+---
+
+## Run
+
+Once ACE-Step is up, in a new terminal:
 
 ```bash
-git clone <this-repo> ~/code/personal-radio
-cd ~/code/personal-radio
-./setup.sh
-uv run python radio.py
+radio
+# or: uv run python radio.py
 ```
 
 ---
@@ -73,8 +65,8 @@ uv run python radio.py
 ## Usage
 
 ```
-[p] play/pause     [l] like     [d] dislike     [s] skip
-[f] favorite       [n] notes    [r] reset        [q] quit
+[l] like    [d] dislike    [s] skip    [f] favorite
+[n] notes   [r] reset      [q] quit
 ```
 
 Type anything to react and steer the sound:
@@ -82,52 +74,57 @@ Type anything to react and steer the sound:
 ```
 > more melancholic, keep the energy
 > trap argentino, lyrics in spanish
-> instrumental only, ambient, no drums
+> instrumental only, no drums, ambient
 ```
 
 ### Multiple radio stations
 
 ```
-create radio <name>   — start a new station with its own taste profile
-switch radio <name>   — switch active station
-list radios           — see all stations
+create radio <name>    — new station with its own taste profile
+switch radio <name>    — switch active station
+list radios            — see all stations
 ```
 
 ### Explicit notes (always respected by the LLM)
 
+Add notes to permanently shape a station's sound:
+
 ```
 > lyrics must use orthodox christian themes: theotokos, repentance, theosis
 > lyrics in rioplatense spanish, lunfardo slang, barrio themes
+> always instrumental, heavy 808s, dark trap
 ```
 
 ---
 
 ## Configuration
 
-Copy `.env.example` to `.env` and adjust:
+`.env` is created automatically from `.env.example`. Key options:
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `ACESTEP_HOST` | `http://localhost:8001` | ACE-Step API |
-| `OLLAMA_MODEL` | `llama3.2:3b` | Ollama model |
+| `OLLAMA_MODEL` | `llama3.2:3b` | LLM model for param generation |
 | `DEFAULT_DURATION` | `60` | Track length in seconds |
-| `DEFAULT_INFER_STEPS` | `27` | ACE-Step quality steps |
+| `DEFAULT_INFER_STEPS` | `27` | ACE-Step quality (higher = slower) |
 
 ---
 
 ## Project structure
 
 ```
-radio.py          — async main loop
+radio.py        — async main loop
 src/
-  config.py       — .env loading, constants
-  manager.py      — Radio + RadioManager, taste.json I/O
-  reactions.py    — keyword-based reaction parser
-  llm.py          — Ollama param generation + JSON retry + fallback
-  acestep.py      — ACE-Step HTTP client
-  player.py       — afplay wrapper
-  errors.py       — formatted error blocks + errors.log
-  preflight.py    — startup health check
+  config.py     — config + constants
+  manager.py    — radio stations + taste.json I/O
+  reactions.py  — keyword-based reaction parser
+  llm.py        — Ollama param generation + fallback
+  acestep.py    — ACE-Step HTTP client
+  player.py     — afplay wrapper
+  errors.py     — error formatting + log
+  preflight.py  — startup health check
+radios/
+  <name>/
+    taste.json  — taste profile (liked/disliked/skipped + notes)
+    tracks/     — generated .mp3 + .json recipe per track
+    favorites/  — saved favorites
 ```
-
-Each radio station lives in `radios/<name>/` with its own `taste.json`, `tracks/`, and `favorites/`.

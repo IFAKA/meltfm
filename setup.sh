@@ -15,26 +15,25 @@ info() { echo -e "  ${CYAN}→${RESET} $1"; }
 warn() { echo -e "  ${YELLOW}!${RESET} $1"; }
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-ALIAS_LINE="alias radio='${SCRIPT_DIR}/radio'  # personal-radio"
+ALIAS_LINE="alias radio='${SCRIPT_DIR}/radio'  # ai-radio"
 ZSHRC="$HOME/.zshrc"
+ACESTEP_DIR="$HOME/ACE-Step"
 
 echo ""
-echo -e "${BOLD}  ♪  Personal Radio — Setup${RESET}"
+echo -e "${BOLD}  ♪  ai-radio — Setup${RESET}"
 echo -e "  ─────────────────────────────────────────"
 echo ""
 
 # ─── 1. Assert macOS + arm64 ──────────────────────────────────────────────────
-echo -e "${BOLD}[1/5] Checking platform...${RESET}"
+echo -e "${BOLD}[1/7] Checking platform...${RESET}"
 
 if [[ "$(uname)" != "Darwin" ]]; then
     fail "This app requires macOS."
-    echo ""
     exit 1
 fi
 
 if [[ "$(uname -m)" != "arm64" ]]; then
     fail "This app requires Apple Silicon (arm64). Detected: $(uname -m)"
-    echo ""
     exit 1
 fi
 
@@ -42,48 +41,48 @@ ok "macOS arm64 (Apple Silicon)"
 
 # ─── 2. Assert Homebrew ───────────────────────────────────────────────────────
 echo ""
-echo -e "${BOLD}[2/5] Checking Homebrew...${RESET}"
+echo -e "${BOLD}[2/7] Checking Homebrew...${RESET}"
 
 if ! command -v brew &>/dev/null; then
-    fail "Homebrew not found."
-    info "Install it from: https://brew.sh"
-    info "  /bin/bash -c \"\$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)\""
-    echo ""
+    fail "Homebrew not found — install it first:"
+    info '  /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"'
     exit 1
 fi
 
 ok "Homebrew at $(command -v brew)"
 
-# ─── 3. Install uv if missing ─────────────────────────────────────────────────
+# ─── 3. Install uv + python@3.12 ──────────────────────────────────────────────
 echo ""
-echo -e "${BOLD}[3/5] Checking uv...${RESET}"
+echo -e "${BOLD}[3/7] Checking uv + Python...${RESET}"
 
 if ! command -v uv &>/dev/null; then
-    warn "uv not found — installing via curl installer..."
+    warn "uv not found — installing..."
     curl -LsSf https://astral.sh/uv/install.sh | sh
-
-    # Add to PATH for this session
     export PATH="$HOME/.local/bin:$PATH"
-
-    if ! command -v uv &>/dev/null; then
-        fail "uv install failed. Try manually:"
-        info "  curl -LsSf https://astral.sh/uv/install.sh | sh"
-        info "  Then add ~/.local/bin to your PATH"
-        echo ""
-        exit 1
-    fi
-    ok "uv installed at $(command -v uv)"
-else
-    ok "uv at $(command -v uv) ($(uv --version 2>/dev/null | head -1))"
 fi
 
-# ─── 4. Create directory structure + install deps ─────────────────────────────
+if ! command -v uv &>/dev/null; then
+    fail "uv install failed. Try: curl -LsSf https://astral.sh/uv/install.sh | sh"
+    exit 1
+fi
+
+ok "uv $(uv --version 2>/dev/null | head -1)"
+
+# python@3.12 needed for ACE-Step (requires <3.13)
+if ! command -v python3.12 &>/dev/null; then
+    warn "python3.12 not found — installing via Homebrew (needed for ACE-Step)..."
+    brew install python@3.12
+fi
+
+ok "python3.12 at $(command -v python3.12)"
+
+# ─── 4. Install project deps ──────────────────────────────────────────────────
 echo ""
-echo -e "${BOLD}[4/5] Setting up project...${RESET}"
+echo -e "${BOLD}[4/7] Setting up project...${RESET}"
 
 mkdir -p "$SCRIPT_DIR/radios/default/tracks"
 mkdir -p "$SCRIPT_DIR/radios/default/favorites"
-ok "radios/default/ structure created"
+ok "radios/default/ structure ready"
 
 if [[ ! -f "$SCRIPT_DIR/.env" ]]; then
     cp "$SCRIPT_DIR/.env.example" "$SCRIPT_DIR/.env"
@@ -98,9 +97,9 @@ ok "Python deps installed in .venv/"
 
 # ─── 5. Shell alias ───────────────────────────────────────────────────────────
 echo ""
-echo -e "${BOLD}[5/5] Installing shell alias...${RESET}"
+echo -e "${BOLD}[5/7] Installing shell alias...${RESET}"
 
-if grep -qF "# personal-radio" "$ZSHRC" 2>/dev/null; then
+if grep -qF "# ai-radio" "$ZSHRC" 2>/dev/null; then
     ok "alias 'radio' already in $ZSHRC"
 else
     echo "" >> "$ZSHRC"
@@ -109,75 +108,87 @@ else
     warn "Run 'source ~/.zshrc' or open a new terminal to use it"
 fi
 
-# ─── Batteries check ──────────────────────────────────────────────────────────
+# ─── 6. Ollama setup ──────────────────────────────────────────────────────────
 echo ""
-echo -e "${BOLD}Checking batteries (external tools)...${RESET}"
-echo ""
+echo -e "${BOLD}[6/7] Setting up Ollama...${RESET}"
 
-BATTERIES_OK=true
-
-# Ollama binary
-if command -v ollama &>/dev/null; then
-    ok "Ollama installed at $(command -v ollama)"
-else
-    fail "Ollama not installed"
-    info "Install: https://ollama.com/download"
-    BATTERIES_OK=false
+if ! command -v ollama &>/dev/null; then
+    warn "Ollama not found — installing via Homebrew..."
+    brew install ollama
 fi
 
-# Ollama daemon
+ok "Ollama at $(command -v ollama)"
+
+# Start Ollama daemon if not running
+if ! curl -sf http://localhost:11434/api/tags &>/dev/null; then
+    warn "Ollama daemon not running — starting in background..."
+    ollama serve &>/dev/null &
+    sleep 3
+fi
+
 if curl -sf http://localhost:11434/api/tags &>/dev/null; then
-    ok "Ollama daemon running (localhost:11434)"
+    ok "Ollama daemon running"
 else
-    fail "Ollama daemon not running"
-    info "Start it: ollama serve"
-    BATTERIES_OK=false
+    fail "Ollama daemon failed to start. Run: ollama serve"
+    exit 1
 fi
 
-# llama3.2:3b model
-if command -v ollama &>/dev/null && ollama list 2>/dev/null | grep -q "llama3.2:3b"; then
-    ok "llama3.2:3b model available"
-else
-    fail "llama3.2:3b model not found"
-    info "Pull it: ollama pull llama3.2:3b"
-    BATTERIES_OK=false
+# Pull model if missing
+OLLAMA_MODEL=$(grep "^OLLAMA_MODEL=" "$SCRIPT_DIR/.env" | cut -d= -f2 || echo "llama3.2:3b")
+if ! ollama list 2>/dev/null | grep -q "$OLLAMA_MODEL"; then
+    warn "$OLLAMA_MODEL not found — pulling (this may take a few minutes)..."
+    ollama pull "$OLLAMA_MODEL"
 fi
 
-# ACE-Step server
-if curl -sf http://localhost:8000/health &>/dev/null; then
-    ok "ACE-Step server running (localhost:8000)"
+ok "$OLLAMA_MODEL model ready"
+
+# ─── 7. ACE-Step setup ────────────────────────────────────────────────────────
+echo ""
+echo -e "${BOLD}[7/7] Setting up ACE-Step...${RESET}"
+
+if [[ ! -d "$ACESTEP_DIR" ]]; then
+    warn "ACE-Step not found — cloning..."
+    git clone https://github.com/ace-step/ACE-Step-1.5.git "$ACESTEP_DIR"
+fi
+
+ok "ACE-Step at $ACESTEP_DIR"
+
+# Set up ACE-Step venv with python3.12 if not done
+if [[ ! -d "$ACESTEP_DIR/venv" ]]; then
+    warn "ACE-Step venv not found — installing (this takes a few minutes)..."
+    python3.12 -m venv "$ACESTEP_DIR/venv"
+    source "$ACESTEP_DIR/venv/bin/activate"
+    pip install -e "$ACESTEP_DIR" --quiet
+    deactivate
+    ok "ACE-Step installed"
 else
-    fail "ACE-Step server NOT running"
-    echo ""
-    echo -e "  ${YELLOW}Start it:${RESET}"
-    echo -e "    cd ~/ACE-Step"
-    echo -e "    PYTORCH_MPS_HIGH_WATERMARK_RATIO=0.0 python infer-api.py"
-    echo ""
+    ok "ACE-Step venv ready"
+fi
 
-    if [[ ! -d "$HOME/ACE-Step" ]]; then
-        echo -e "  ${YELLOW}ACE-Step not found. One-time install (~20-40GB download):${RESET}"
-        echo ""
-        echo -e "    git clone https://github.com/ace-step/ACE-Step-1.5.git ~/ACE-Step"
-        echo -e "    cd ~/ACE-Step && pip install -e ."
-        echo -e "    PYTORCH_MPS_HIGH_WATERMARK_RATIO=0.0 python infer-api.py"
-        echo -e "    # First run downloads model weights — needs ~40 min + internet"
-        echo ""
-    fi
-
-    BATTERIES_OK=false
+# Check if ACE-Step API is already running
+if curl -sf http://localhost:8001/health &>/dev/null; then
+    ok "ACE-Step server already running (localhost:8001)"
+else
+    warn "ACE-Step server not running"
+    echo ""
+    echo -e "  ${YELLOW}${BOLD}Start ACE-Step in a separate terminal:${RESET}"
+    echo ""
+    echo -e "    ${BOLD}cd ~/ACE-Step && ./start_api_server_macos.sh${RESET}"
+    echo ""
+    echo -e "  First run downloads model weights (~20-40 GB). Wait for:"
+    echo -e "  ${CYAN}API will be available at: http://127.0.0.1:8001${RESET}"
+    echo ""
 fi
 
 # ─── Summary ──────────────────────────────────────────────────────────────────
-echo ""
 echo -e "  ─────────────────────────────────────────"
+echo ""
 
-if [[ "$BATTERIES_OK" == "true" ]]; then
-    echo -e ""
+if curl -sf http://localhost:8001/health &>/dev/null; then
     echo -e "  ${GREEN}${BOLD}All systems go.${RESET} Start your radio:"
     echo -e "    ${BOLD}radio${RESET}"
 else
-    echo -e ""
-    echo -e "  ${YELLOW}${BOLD}Setup done — start the batteries listed above, then:${RESET}"
+    echo -e "  ${YELLOW}${BOLD}Almost there.${RESET} Start ACE-Step first (see above), then:"
     echo -e "    ${BOLD}radio${RESET}  (or: uv run python radio.py)"
 fi
 

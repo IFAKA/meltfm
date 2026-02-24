@@ -119,12 +119,8 @@ async def _check_acestep() -> tuple[bool, str, str]:
 
     fix = (
         "ACE-Step is not running. Start it with:\n"
-        "  cd ~/ACE-Step\n"
-        "  PYTORCH_MPS_HIGH_WATERMARK_RATIO=0.0 python infer-api.py\n\n"
-        "If ACE-Step is not installed yet (~20-40GB download):\n"
-        "  git clone https://github.com/ace-step/ACE-Step-1.5.git ~/ACE-Step\n"
-        "  cd ~/ACE-Step && pip install -e .\n"
-        "  PYTORCH_MPS_HIGH_WATERMARK_RATIO=0.0 python infer-api.py\n"
-        "  # First run downloads model weights — ~40 min + internet"
+        "  cd ~/ACE-Step && ./start_api_server_macos.sh\n\n"
+        "Wait for: API will be available at: http://127.0.0.1:8001\n"
+        "(First run downloads model weights — ~20-40 GB)"
     )
-    return False, "not responding at localhost:8000", fix
+    return False, "not responding at localhost:8001", fix

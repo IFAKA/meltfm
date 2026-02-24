@@ -16,7 +16,7 @@ OUTPUT_DIR = ROOT_DIR / os.getenv("OUTPUT_DIR", "output")
 ERRORS_LOG = OUTPUT_DIR / "errors.log"
 
 # ─── External services ────────────────────────────────────────────────────────
-ACESTEP_HOST = os.getenv("ACESTEP_HOST", "http://localhost:8000").rstrip("/")
+ACESTEP_HOST = os.getenv("ACESTEP_HOST", "http://localhost:8001").rstrip("/")
 ACESTEP_TIMEOUT = int(os.getenv("ACESTEP_TIMEOUT", "600"))
 
 OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://localhost:11434").rstrip("/")
