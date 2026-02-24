@@ -11,7 +11,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ZSHRC="$HOME/.zshrc"
 
 echo ""
-echo -e "${BOLD}  ♪  Personal Radio — Uninstall${RESET}"
+echo -e "${BOLD}  ♪  ai-radio — Uninstall${RESET}"
 echo -e "  ─────────────────────────────────────────"
 echo ""
 echo -e "  This will:"
@@ -31,9 +31,9 @@ if [[ "$confirm" != "yes" && "$confirm" != "y" ]]; then
 fi
 
 # ── Remove alias from .zshrc ──────────────────────────────────────────────────
-if grep -qF "# personal-radio" "$ZSHRC" 2>/dev/null; then
+if grep -qF "# ai-radio" "$ZSHRC" 2>/dev/null; then
     # Remove the alias line (and the blank line before it if any)
-    grep -vF "# personal-radio" "$ZSHRC" > "${ZSHRC}.tmp" && mv "${ZSHRC}.tmp" "$ZSHRC"
+    grep -vF "# ai-radio" "$ZSHRC" > "${ZSHRC}.tmp" && mv "${ZSHRC}.tmp" "$ZSHRC"
     echo -e "  ${GREEN}✓${RESET} Alias removed from ${ZSHRC}"
 else
     echo -e "  ${GREEN}✓${RESET} No alias found in ${ZSHRC} (already clean)"
