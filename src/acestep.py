@@ -60,6 +60,10 @@ async def generate_track(params: dict, output_path) -> tuple[bool, str]:
         "messages": [{"role": "user", "content": _build_content(params)}],
         "audio_config": audio_config,
         "seed": params.get("seed", -1),
+        # Use 5Hz LM to generate semantic audio codes (lm-dit pipeline, max quality)
+        "thinking": True,
+        "use_cot_caption": True,
+        "use_cot_language": True,
     }
 
     try:
