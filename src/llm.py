@@ -333,46 +333,71 @@ _MOOD_INSTRUMENT_MAP = {
 }
 
 
+def _word_boundary_match(term: str, text: str) -> bool:
+    """Check if term appears in text as a whole word/phrase (not substring)."""
+    pattern = r"(?:^|[\s,.])" + re.escape(term) + r"(?:[\s,.]|$)"
+    return bool(re.search(pattern, text))
+
+
 def _keyword_fallback(user_message: str) -> dict:
     """Safe defaults extracted from keywords in the user's message.
-    Uses tags.py whitelists for matching, produces properly ordered tags."""
+    Uses tags.py whitelists for matching, runs result through validate_and_order_tags."""
     msg = user_message.lower()
     found_genres: list[str] = []
     found_moods: list[str] = []
     found_instruments: list[str] = []
     found_vocal: str = "instrumental"
     found_textures: list[str] = []
+    found_rap: list[str] = []
 
-    # Match genres from whitelist
-    for g in GENRES:
-        if g in msg:
+    # Match genres from whitelist (word boundary to avoid "thin" in "something")
+    for g in sorted(GENRES, key=len, reverse=True):  # longest first
+        if _word_boundary_match(g, msg):
             found_genres.append(g)
             if len(found_genres) >= 2:
                 break
 
     # Match moods from whitelist
-    for m in MOODS:
-        if m in msg:
+    for m in sorted(MOODS, key=len, reverse=True):
+        if _word_boundary_match(m, msg):
             found_moods.append(m)
             if len(found_moods) >= 3:
                 break
 
     # Match instruments from whitelist
-    for i in INSTRUMENTS:
-        if i in msg:
+    for i in sorted(INSTRUMENTS, key=len, reverse=True):
+        if _word_boundary_match(i, msg):
             found_instruments.append(i)
             if len(found_instruments) >= 4:
                 break
 
-    # Match vocal type
-    for v in VOCALS:
-        if v in msg:
-            found_vocal = v
+    # Match vocal type (check aliases first: "female singer" → "female vocal")
+    vocal_aliases = {
+        "female singer": "female vocal", "male singer": "male vocal",
+        "female voice": "female vocal", "male voice": "male vocal",
+        "female vocals": "female vocal", "male vocals": "male vocal",
+        "with vocals": "female vocal",
+    }
+    for alias, target in vocal_aliases.items():
+        if alias in msg:
+            found_vocal = target
             break
+    else:
+        for v in VOCALS:
+            if _word_boundary_match(v, msg):
+                found_vocal = v
+                break
+
+    # Match rap styles
+    for r in RAP_STYLES:
+        if _word_boundary_match(r, msg):
+            found_rap.append(r)
+            if len(found_rap) >= 1:
+                break
 
     # Match textures
-    for t in TEXTURES:
-        if t in msg:
+    for t in sorted(TEXTURES, key=len, reverse=True):
+        if _word_boundary_match(t, msg):
             found_textures.append(t)
             if len(found_textures) >= 2:
                 break
@@ -392,9 +417,11 @@ def _keyword_fallback(user_message: str) -> dict:
     if not found_instruments:
         found_instruments = ["synth pad", "drums"]
 
-    # Assemble in proper order
-    tags_parts = found_genres[:2] + found_moods[:3] + found_instruments[:4] + [found_vocal] + found_textures[:2]
-    tags = ", ".join(tags_parts)
+    # Assemble and run through validation pipeline for dedup/ordering/limits
+    tags_parts = (found_genres[:2] + found_moods[:3] + found_instruments[:4]
+                  + [found_vocal] + found_rap[:1] + found_textures[:2])
+    raw_tags = ", ".join(tags_parts)
+    tags = validate_and_order_tags(raw_tags)
 
     # BPM heuristic
     bpm = 110
