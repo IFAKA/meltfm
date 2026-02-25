@@ -13,7 +13,7 @@ def parse_reaction(text: str) -> dict:
         "mood":       "focus" | "energy" | "chill" | ... | None,
         "command":    "save" | "what" | "history" | "quit" |
                       "switch_radio" | "create_radio" | "list_radios" |
-                      "delete_radio" | "share" | "open_folder" | None,
+                      "delete_radio" | "share" | "open_folder" | "help" | None,
         "radio_name": str | None,
         "raw":        original text,
     }
@@ -40,7 +40,7 @@ def parse_reaction(text: str) -> dict:
     # ── Radio management (checked before general commands) ────────────────────
 
     # list radios
-    if re.search(r"(what radios|list radios|my radios|show radios)", t):
+    if re.search(r"(what radios|list radios|my radios|show radios|\bradios\b)", t):
         result["command"] = "list_radios"
         return result
 
@@ -63,9 +63,12 @@ def parse_reaction(text: str) -> dict:
         result["radio_name"] = _clean_radio_name(create_match.group(1))
         return result
 
-    # delete / remove radio X
+    # delete / remove radio X — require "radio" keyword to avoid collision
+    # with modifiers like "remove vocals" or "kill the beat"
     delete_match = re.search(
-        r"(?:delete|remove|kill)\s+(?:the\s+)?(?:my\s+)?(.+?)(?:\s+radio)?$", t
+        r"(?:delete|remove|kill)\s+(?:the\s+)?(?:my\s+)?(.+?)\s+radio$", t
+    ) or re.search(
+        r"(?:delete|remove|kill)\s+(?:the\s+)?(?:my\s+)?radio\s+(.+?)$", t
     )
     if delete_match:
         result["command"] = "delete_radio"
@@ -76,11 +79,12 @@ def parse_reaction(text: str) -> dict:
 
     if re.search(r"\bsave\b|\bkeep\b|\bfavorite\b|\bfav\b", t):
         result["command"] = "save"
+        result["signal"] = "liked"  # saving implies liking
 
     if re.search(r"what is this|what's this|\binfo\b|\brecipe\b|\bparams\b|\bdetails\b", t):
         result["command"] = "what"
 
-    if re.search(r"\bhistory\b|\blast played\b|\brecent\b", t):
+    if re.search(r"\bhistory\b|\blast played\b|\brecent\b|\btracks\b|\bsongs\b", t):
         result["command"] = "history"
 
     if re.search(r"\bshare\b", t):
@@ -88,6 +92,9 @@ def parse_reaction(text: str) -> dict:
 
     if re.search(r"open folder|open in finder|\bfinder\b", t):
         result["command"] = "open_folder"
+
+    if re.search(r"^\s*help\s*$", t):
+        result["command"] = "help"
 
     # ── Signal ────────────────────────────────────────────────────────────────
 

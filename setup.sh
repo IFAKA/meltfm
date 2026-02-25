@@ -15,12 +15,12 @@ info() { echo -e "  ${CYAN}→${RESET} $1"; }
 warn() { echo -e "  ${YELLOW}!${RESET} $1"; }
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-ALIAS_LINE="alias radio='${SCRIPT_DIR}/radio'  # ai-radio"
+ALIAS_LINE="alias radio='${SCRIPT_DIR}/radio'  # meltfm"
 ZSHRC="$HOME/.zshrc"
 ACESTEP_DIR="$HOME/ACE-Step"
 
 echo ""
-echo -e "${BOLD}  ♪  ai-radio — Setup${RESET}"
+echo -e "${BOLD}  ♪  meltfm — Setup${RESET}"
 echo -e "  ─────────────────────────────────────────"
 echo ""
 
@@ -99,7 +99,7 @@ ok "Python deps installed in .venv/"
 echo ""
 echo -e "${BOLD}[5/7] Installing shell alias...${RESET}"
 
-if grep -qF "# ai-radio" "$ZSHRC" 2>/dev/null; then
+if grep -qF "# meltfm" "$ZSHRC" 2>/dev/null; then
     ok "alias 'radio' already in $ZSHRC"
 else
     echo "" >> "$ZSHRC"

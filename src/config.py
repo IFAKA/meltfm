@@ -24,7 +24,7 @@ OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3.2:3b")
 OLLAMA_TIMEOUT = int(os.getenv("OLLAMA_TIMEOUT", "90"))
 
 # ─── Generation defaults ──────────────────────────────────────────────────────
-DEFAULT_DURATION = int(os.getenv("DEFAULT_DURATION", "60"))
+DEFAULT_DURATION = int(os.getenv("DEFAULT_DURATION", "120"))
 DEFAULT_INFER_STEPS = int(os.getenv("DEFAULT_INFER_STEPS", "27"))
 
 # ─── Hard limits ──────────────────────────────────────────────────────────────
@@ -49,3 +49,6 @@ MAX_DISLIKED_HISTORY = 20
 MAX_SKIPPED_HISTORY = 10
 
 APP_VERSION = "0.1.0"
+
+# ─── Dev mode ─────────────────────────────────────────────────────────────────
+DEV_MODE = os.getenv("DEV_MODE", "1").strip() in ("1", "true", "yes")

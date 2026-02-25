@@ -64,7 +64,8 @@ async def _check_python_deps() -> tuple[bool, str, str]:
 
     try:
         import rich
-        versions.append(f"rich {rich.__version__}")
+        v = getattr(rich, "__version__", "ok")
+        versions.append(f"rich {v}")
     except ImportError:
         missing.append("rich")
 
@@ -130,27 +131,83 @@ async def _check_acestep() -> tuple[bool, str, str]:
             "ACE-Step not found. Run ./setup.sh to install it."
         )
 
-    console.print("  [yellow]→[/yellow] ACE-Step not running — starting it...")
+    console.print("  [yellow]→[/yellow] ACE-Step not running — starting it... [dim](Ctrl+C to cancel)[/dim]")
+
+    import tempfile, os
+    log_file = Path(tempfile.gettempdir()) / "acestep_start.log"
+    log_f = open(log_file, "w")
+
+    # Find uv — search common locations + broad find as fallback
+    uv_path = None
+    for candidate in [
+        Path.home() / ".local/bin/uv",
+        Path.home() / ".cargo/bin/uv",
+        Path("/opt/homebrew/bin/uv"),
+        Path("/usr/local/bin/uv"),
+    ]:
+        if candidate.exists():
+            uv_path = str(candidate)
+            break
+    if not uv_path:
+        try:
+            result = subprocess.run(
+                ["find", str(Path.home()), "-name", "uv", "-type", "f", "-perm", "+111"],
+                capture_output=True, text=True, timeout=5
+            )
+            for line in result.stdout.splitlines():
+                if "__pycache__" not in line and line.strip():
+                    uv_path = line.strip()
+                    break
+        except Exception:
+            pass
+
+    if not uv_path:
+        log_f.close()
+        return False, "uv not found", (
+            "Install uv: curl -LsSf https://astral.sh/uv/install.sh | sh\n"
+            "Then re-run: uv run python radio.py"
+        )
+
+    # Bypass the interactive start script — run acestep-api directly
+    env = os.environ.copy()
+    env["ACESTEP_LM_BACKEND"] = "mlx"
+    env["TOKENIZERS_PARALLELISM"] = "false"
     subprocess.Popen(
-        ["bash", str(start_script)],
+        [uv_path, "run", "acestep-api", "--host", "127.0.0.1", "--port", "8001"],
         cwd=str(acestep_dir),
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
+        env=env,
+        stdout=log_f,
+        stderr=subprocess.STDOUT,
     )
 
-    # Wait up to 120s for it to come up (first run downloads weights)
-    console.print("  [yellow]→[/yellow] Waiting for ACE-Step to be ready (first run may download weights)...")
-    for _ in range(120):
+    # Wait up to 180s — covers cold start when models are already downloaded
+    last_shown = ""
+    for elapsed in range(180):
         await asyncio.sleep(1)
         try:
             async with httpx.AsyncClient(timeout=2) as client:
                 r = await client.get(f"{ACESTEP_HOST}/health")
                 if r.status_code == 200:
+                    log_f.close()
                     return True, f"auto-started at {ACESTEP_HOST.replace('http://', '')}", ""
         except Exception:
             pass
 
-    return False, "failed to start after 120s", (
-        "ACE-Step took too long. Run manually:\n"
-        "  cd ~/ACE-Step && ./start_api_server_macos.sh"
+        # Show latest line from log
+        try:
+            lines = log_file.read_text().splitlines()
+            last = next((l.strip() for l in reversed(lines) if l.strip()), "")
+            if last and last != last_shown:
+                last_shown = last
+                console.print(f"  [dim]  [{elapsed}s] {last[:80]}[/dim]")
+        except Exception:
+            pass
+
+    log_f.close()
+    return False, "not ready after 3 min", (
+        "First time running? You need to download the model weights first (~20-40 GB).\n"
+        "Open a separate terminal and run:\n"
+        "  cd ~/ACE-Step && ./start_api_server_macos.sh\n"
+        "Wait for: 'API will be available at: http://127.0.0.1:8001' (takes 30-60 min)\n"
+        "Then re-run: radio"
     )

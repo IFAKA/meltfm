@@ -5,7 +5,14 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
-from .config import ERRORS_LOG, OUTPUT_DIR
+from .config import ERRORS_LOG, OUTPUT_DIR, DEV_MODE
+
+_FRIENDLY_MESSAGES = {
+    "track_generation": "Oops, that track failed — trying again...",
+    "llm_generate": "Couldn't come up with params — retrying...",
+    "disk_check": "Running low on disk space.",
+    "preflight": "Startup check failed — see above for details.",
+}
 
 
 def format_error(
@@ -25,13 +32,16 @@ def format_error(
  Input:    "{user_msg}"
  Params:   {params_str}
  Error:    {raw}
- Fix ask:  The music-generator radio crashed at "{stage}".
+ Fix ask:  The meltfm radio crashed at "{stage}".
            Reproduce with: uv run python radio.py
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 """.strip()
 
     _append_to_log(block)
-    return block
+
+    if DEV_MODE:
+        return block
+    return _FRIENDLY_MESSAGES.get(stage, f"Something went wrong ({stage}). Check errors.log for details.")
 
 
 def _append_to_log(block: str):
