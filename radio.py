@@ -888,6 +888,7 @@ async def main():
     queued_track: Optional[Path] = None
     queued_params: Optional[dict] = None
     recent_params: list[dict] = []
+    interrupt_when_ready = False
 
     # ── Main loop ─────────────────────────────────────────────────────────────
     while True:
@@ -969,6 +970,31 @@ async def main():
             # Auto-advance: reactively wait for track to end, then play next.
             # No polling — uses asyncio.Event set by Player when afplay exits.
             async def _auto_advance():
+                nonlocal interrupt_when_ready
+                # If user requested a change, race: track end vs new track ready
+                if interrupt_when_ready and not gen_task.done():
+                    done_waiter = asyncio.create_task(player.wait_done_async())
+                    gen_waiter = asyncio.create_task(asyncio.shield(gen_task))
+                    done_set, pending = await asyncio.wait(
+                        [done_waiter, gen_waiter],
+                        return_when=asyncio.FIRST_COMPLETED,
+                    )
+                    for p in pending:
+                        p.cancel()
+                    # Gen finished first → interrupt playback and start new track
+                    if gen_waiter in done_set:
+                        try:
+                            ok, _ = gen_task.result()
+                        except Exception:
+                            return
+                        if ok and next_path.exists():
+                            interrupt_when_ready = False
+                            player.stop()
+                            dur = get_audio_duration(next_path)
+                            player.play(next_path, duration=dur)
+                            return
+                    # Track ended naturally — fall through to normal loop
+
                 while True:
                     # Wait for current track to actually finish (reactive, not polling)
                     await player.wait_done_async()
@@ -1227,11 +1253,13 @@ async def main():
                 next_path.unlink()
             # Don't save recipe or increment count for a discarded track
             console.print("  [dim]↻ Got it — regenerating with your changes...[/dim]")
+            interrupt_when_ready = True
             last_reaction = user_input
             last_params = queued_params or last_params
             recent_params = (recent_params + [queued_params or params])[-5:]
         else:
             # No change — save recipe and queue the pre-generated track
+            interrupt_when_ready = False
             _commit_track()
             queued_track = next_path
             queued_params = params
