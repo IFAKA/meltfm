@@ -100,6 +100,14 @@ async def main():
             sys.stdout.flush()
 
         if not check_disk(radio):
+            if player.is_playing() or player.is_paused():
+                console.print("  [yellow]⚠  Low disk — free space to keep generating. Music continues.[/yellow]")
+                user_input = await get_user_input(player=player)
+                if user_input:
+                    reaction = parse_reaction(user_input)
+                    if reaction["command"] == "quit":
+                        break
+                continue
             break
 
         # ── 1. Detect if LLM is stuck ────────────────────────────────────
@@ -335,7 +343,10 @@ async def main():
         if not success:
             console.print(f"\n[red]{format_error('track_generation', user_input, params, err)}[/red]")
             console.print("  [yellow]Retrying...[/yellow]")
-            success2, err2 = await generate_track(params, next_path)
+            try:
+                success2, err2 = await generate_track(params, next_path)
+            except Exception as e:
+                success2, err2 = False, str(e)
             if not success2:
                 console.print(f"  [red]Retry failed: {err2}[/red]")
                 last_reaction = user_input
@@ -345,7 +356,10 @@ async def main():
         # ── 7. Build recipe ───────────────────────────────────────────────
         gen_elapsed = time.monotonic() - gen_start
         audio_dur = get_audio_duration(next_path) if next_path.exists() else None
-        file_size = next_path.stat().st_size if next_path.exists() else None
+        try:
+            file_size = next_path.stat().st_size if next_path.exists() else None
+        except OSError:
+            file_size = None
 
         recipe = {
             **params,
