@@ -315,6 +315,14 @@ class RadioEngine:
             self._model_ensured = await acestep_ensure_model()
 
 
+        # ── Play queued track now if it's not already playing (avoids silence gap) ──
+        if self._queued_track and self._queued_track.exists():
+            if not (self.player.is_playing() and self.player.current_track == self._queued_track):
+                dur = get_audio_duration(self._queued_track)
+                self.player.play(self._queued_track, duration=dur)
+                await self.state.broadcast("now_playing", self._build_now_playing(self._queued_params, self._queued_track))
+                await self._broadcast_playback_state()
+
         # ── Detect stuck LLM ────────────────────────────────────────────
         inject_vary = ""
         if self._last_params and params_are_too_similar(self._last_params, self._recent_params):
@@ -388,14 +396,6 @@ class RadioEngine:
         self._next_path = next_path
         self._gen_task = asyncio.create_task(generate_track(params, next_path))
         gen_start = time.monotonic()
-
-        # ── Play queued track if ready ──────────────────────────────────
-        if self._queued_track and self._queued_track.exists():
-            if not (self.player.is_playing() and self.player.current_track == self._queued_track):
-                dur = get_audio_duration(self._queued_track)
-                self.player.play(self._queued_track, duration=dur)
-                await self.state.broadcast("now_playing", self._build_now_playing(self._queued_params, self._queued_track))
-                await self._broadcast_playback_state()
 
         # ── Wait for generation while track plays ───────────────────────
         if self.player.is_playing() or self.player.is_paused():
