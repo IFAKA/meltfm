@@ -101,6 +101,7 @@ class RadioEngine:
         """Skip current track — discard queue and regenerate."""
         reaction = {"signal": "skipped", "modifiers": [], "mood": None,
                     "direction": None, "command": None, "raw": "skip"}
+        await self.state.broadcast("reaction_feedback", {"signal": "skipped"})
         await self._discard_and_regenerate(reaction, "skip")
 
     async def save(self):
@@ -346,6 +347,11 @@ class RadioEngine:
             if llm_looper and not llm_looper.done():
                 llm_looper.cancel()
 
+        # If a reaction fired while LLM was running, restart with updated direction
+        if self._reaction_event.is_set():
+            self._reaction_event.clear()
+            return
+
         # Clear accumulated modifiers
         self._pending_modifiers.clear()
 
@@ -433,9 +439,28 @@ class RadioEngine:
         async def _auto_advance():
             nonlocal auto_advanced
             while True:
-                await self.player.wait_done_async()
-                if self.player.is_playing() or self.player.is_paused():
-                    continue
+                # Poll every 0.3s; also wake early if gen done + interrupt flag set
+                while self.player.is_playing() or self.player.is_paused():
+                    if self._gen_task.done() and self._interrupt_when_ready:
+                        break
+                    await asyncio.sleep(0.3)
+
+                # Gen finished while track was still playing (dislike interrupt-when-ready)
+                if self._gen_task.done() and self._interrupt_when_ready:
+                    self._interrupt_when_ready = False
+                    success, _ = await self._get_gen_result()
+                    if success and next_path.exists():
+                        dur = get_audio_duration(next_path)
+                        self.player.play(next_path, duration=dur)
+                        self._queued_track = next_path
+                        self._queued_params = params
+                        auto_advanced = True
+                        await self.state.broadcast("now_playing", self._build_now_playing(params, next_path))
+                        await self._broadcast_playback_state()
+                        continue
+                    return
+
+                # Track ended naturally
                 if self._gen_task.done():
                     success, _ = await self._get_gen_result()
                     if success and next_path.exists():
@@ -448,6 +473,7 @@ class RadioEngine:
                         await self._broadcast_playback_state()
                         continue
                     return
+
                 # Track ended but gen not done — loop current
                 if self._queued_track and self._queued_track.exists():
                     self.player.replay()
@@ -511,9 +537,7 @@ class RadioEngine:
         self._last_params = params
         self._recent_params = (self._recent_params + [params])[-5:]
 
-        if auto_advanced:
-            await self.state.broadcast("generation_done", {})
-            # Return immediately — main loop starts generating next track while this one plays
+        # generation_done already broadcast by _broadcast_gen_progress; no duplicate here
 
     async def _wait_for_track_end(self):
         """Wait for the current track to end naturally or for user to react."""
@@ -563,6 +587,8 @@ class RadioEngine:
         elif reaction.get("signal") == "disliked":
             self._interrupt_when_ready = True
             self._last_reaction = "Shift direction noticeably — change genre or energy. " + user_input
+            self._queued_track = None
+            self._queued_params = None
 
         # Update tracking
         self._last_params = self._queued_params or self._last_params
