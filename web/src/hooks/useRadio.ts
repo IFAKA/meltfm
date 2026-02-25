@@ -36,6 +36,8 @@ export type EventEntry = {
   type: string;
   summary: string;
   level: "info" | "warn" | "error";
+  payload?: Record<string, unknown>;
+  deltaMs?: number;
 };
 
 export type RadioState = {
@@ -54,6 +56,8 @@ export type RadioState = {
   error: string | null;
   pipeline: PipelineState;
   events: EventEntry[];
+  llmDurationMs: number | null;
+  aceDurationMs: number | null;
 };
 
 export function useRadio() {
@@ -67,12 +71,14 @@ export function useRadio() {
     duration: 0,
     volume: 80,
     generating: false,
-    queueReady: false,  // included in initial state
+    queueReady: false,
     generationElapsed: 0,
     generationParams: null,
     error: null,
     pipeline: { stage: "idle", llmDone: false, warnings: [], lastError: null },
     events: [],
+    llmDurationMs: null,
+    aceDurationMs: null,
   });
 
   const socketRef = useRef<RadioSocket | null>(null);
@@ -85,6 +91,12 @@ export function useRadio() {
   // Tracks whether now_playing fired after the current generation_start.
   // Used to distinguish "track queued and ready" from "track already playing".
   const nowPlayingAfterGenStart = useRef(false);
+  // Timing refs for LLM and ACE-Step durations
+  const lastEventTsRef = useRef<number | null>(null);
+  const thinkingStartRef = useRef<number | null>(null);
+  const genStartRef = useRef<number | null>(null);
+  // Track last progress milestone logged (in seconds)
+  const lastProgressMilestoneRef = useRef(0);
 
   const showToast = useCallback((msg: string) => {
     toast(msg);
@@ -115,14 +127,26 @@ export function useRadio() {
       });
     };
 
-    /** Create a typed event log entry (id incremented outside setState to avoid double-fire). */
-    const mkEvent = (type: string, summary: string, level: EventEntry["level"]): EventEntry => ({
-      id: ++eventIdRef.current,
-      ts: Date.now(),
-      type,
-      summary,
-      level,
-    });
+    /** Create a typed event log entry with optional payload and delta time. */
+    const mkEvent = (
+      type: string,
+      summary: string,
+      level: EventEntry["level"],
+      payload?: Record<string, unknown>
+    ): EventEntry => {
+      const now = Date.now();
+      const deltaMs = lastEventTsRef.current != null ? now - lastEventTsRef.current : undefined;
+      lastEventTsRef.current = now;
+      return {
+        id: ++eventIdRef.current,
+        ts: now,
+        type,
+        summary,
+        level,
+        payload,
+        deltaMs,
+      };
+    };
 
     const pushEvent = (e: EventEntry) =>
       setState((s) => ({ ...s, events: [e, ...s.events].slice(0, 60) }));
@@ -152,7 +176,12 @@ export function useRadio() {
           case "now_playing": {
             const np = msg.data as NowPlaying;
             const tag0 = np.tags?.split(",")[0]?.trim() ?? "track";
-            const npEvt = mkEvent("now_playing", `▶ ${tag0}${np.bpm ? " · " + np.bpm + " BPM" : ""}`, "info");
+            const npEvt = mkEvent(
+              "now_playing",
+              `▶ ${tag0}${np.bpm ? " · " + np.bpm + " BPM" : ""}`,
+              "info",
+              { id: np.id, tags: np.tags, bpm: np.bpm, key_scale: np.key_scale, instrumental: np.instrumental, rationale: np.rationale }
+            );
             nowPlayingRef.current = np;
             nowPlayingAfterGenStart.current = true;
             setState((s) => ({
@@ -185,6 +214,7 @@ export function useRadio() {
             break;
 
           case "thinking": {
+            thinkingStartRef.current = Date.now();
             const evt = mkEvent("thinking", "LLM thinking…", "info");
             setState((s) => ({
               ...s,
@@ -202,7 +232,18 @@ export function useRadio() {
             const bpmStr = typeof p?.bpm === "number" ? `${p.bpm} BPM` : "";
             const warnings: string[] = Array.isArray(msg.data.warnings) ? msg.data.warnings : [];
             const level: EventEntry["level"] = warnings.length > 0 ? "warn" : "info";
-            const evt = mkEvent("generation_start", `ACE-Step: ${tag0}${bpmStr ? " · " + bpmStr : ""}`, level);
+            // Compute LLM duration
+            const llmDurationMs = thinkingStartRef.current != null
+              ? Date.now() - thinkingStartRef.current
+              : null;
+            genStartRef.current = Date.now();
+            lastProgressMilestoneRef.current = 0;
+            const evt = mkEvent(
+              "generation_start",
+              `ACE-Step: ${tag0}${bpmStr ? " · " + bpmStr : ""}`,
+              level,
+              { params: p, warnings }
+            );
             nowPlayingAfterGenStart.current = false;
             setState((s) => ({
               ...s,
@@ -212,19 +253,47 @@ export function useRadio() {
               generationParams: msg.data.params,
               pipeline: { stage: "generating", llmDone: true, warnings, lastError: null },
               events: [evt, ...s.events].slice(0, 60),
+              llmDurationMs: llmDurationMs ?? s.llmDurationMs,
             }));
             break;
           }
 
-          case "generation_progress":
-            setState((s) => ({ ...s, generationElapsed: msg.data.elapsed }));
+          case "generation_progress": {
+            const elapsed: number = msg.data.elapsed ?? 0;
+            // Log milestone every 15s
+            const milestone = Math.floor(elapsed / 15) * 15;
+            if (milestone > 0 && milestone > lastProgressMilestoneRef.current) {
+              lastProgressMilestoneRef.current = milestone;
+              const evt = mkEvent(
+                "generation_progress",
+                `ACE-Step: ${milestone}s elapsed`,
+                "info",
+                { elapsed }
+              );
+              setState((s) => ({
+                ...s,
+                generationElapsed: elapsed,
+                events: [evt, ...s.events].slice(0, 60),
+              }));
+            } else {
+              setState((s) => ({ ...s, generationElapsed: elapsed }));
+            }
             break;
+          }
 
           case "generation_done": {
             // If now_playing fired after generation_start, the track is already playing
             // (immediate play on first track or auto-advance). Otherwise it's queued and ready.
             const isQueued = !nowPlayingAfterGenStart.current;
-            const evt = mkEvent("generation_done", isQueued ? "Track queued — ready to play" : "Track ready", "info");
+            const aceDurationMs = genStartRef.current != null
+              ? Date.now() - genStartRef.current
+              : null;
+            const evt = mkEvent(
+              "generation_done",
+              isQueued ? "Track queued — ready to play" : "Track ready",
+              "info",
+              { queued: isQueued }
+            );
             setState((s) => ({
               ...s,
               generating: false,
@@ -234,12 +303,18 @@ export function useRadio() {
               generationParams: isQueued ? s.generationParams : null,
               pipeline: { ...s.pipeline, stage: isQueued ? "ready" : "idle" },
               events: [evt, ...s.events].slice(0, 60),
+              aceDurationMs: aceDurationMs ?? s.aceDurationMs,
             }));
             break;
           }
 
           case "regenerating": {
-            const evt = mkEvent("regenerating", `Regenerating: "${msg.data.reason}"`, "warn");
+            const evt = mkEvent(
+              "regenerating",
+              `Regenerating: "${msg.data.reason}"`,
+              "warn",
+              { reason: msg.data.reason }
+            );
             nowPlayingAfterGenStart.current = false;
             setState((s) => ({
               ...s,
@@ -260,7 +335,7 @@ export function useRadio() {
 
           case "error": {
             const errMsg: string = msg.data.message;
-            const evt = mkEvent("error", errMsg, "error");
+            const evt = mkEvent("error", errMsg, "error", { message: errMsg });
             setState((s) => ({
               ...s,
               error: errMsg,
@@ -309,7 +384,7 @@ export function useRadio() {
 
           case "disk_full": {
             showToast(`Storage full (${msg.data.free_mb}MB left)`);
-            pushEvent(mkEvent("disk_full", `Disk full (${msg.data.free_mb}MB free)`, "error"));
+            pushEvent(mkEvent("disk_full", `Disk full (${msg.data.free_mb}MB free)`, "error", { free_mb: msg.data.free_mb }));
             break;
           }
 

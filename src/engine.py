@@ -406,6 +406,8 @@ class RadioEngine:
 
         success, err = await self._get_gen_result()
         if not success:
+            if err == "cancelled":
+                return  # cancelled by user reaction — main loop will restart
             await self._handle_gen_failure(params, next_path, err, gen_start)
             return
 
@@ -421,13 +423,12 @@ class RadioEngine:
         await self.state.broadcast("now_playing", self._build_now_playing(params, next_path))
         await self.state.broadcast("generation_done", {})
         await self._broadcast_playback_state()
-
-        # Wait for track to end
-        await self._wait_for_track_end()
+        # Return immediately — main loop starts generating next track while this one plays
 
     async def _wait_with_playback(self, params, next_path, gen_start):
         """Wait for generation while a track is playing. Handle auto-advance."""
         auto_advanced = False
+        reaction_broke = False
 
         async def _auto_advance():
             nonlocal auto_advanced
@@ -474,6 +475,7 @@ class RadioEngine:
             # Check if user reacted (discard/regenerate already handled in submit_reaction)
             if self._reaction_event.is_set():
                 self._reaction_event.clear()
+                reaction_broke = True
                 break
 
             # Check if generation is done
@@ -488,12 +490,14 @@ class RadioEngine:
         advance_task.cancel()
         progress_task.cancel()
 
-        if not self._gen_task.done():
-            # User reacted — generation still running, _discard_and_regenerate handles it
+        if not self._gen_task.done() or reaction_broke:
+            # User reacted — _discard_and_regenerate already cancelled gen and updated state
             return
 
         success, err = await self._get_gen_result()
         if not success:
+            if err == "cancelled":
+                return  # cancelled by user reaction — main loop will restart
             await self._handle_gen_failure(params, next_path, err, gen_start)
             return
 
@@ -509,8 +513,7 @@ class RadioEngine:
 
         if auto_advanced:
             await self.state.broadcast("generation_done", {})
-            # Wait for the auto-advanced track to end
-            await self._wait_for_track_end()
+            # Return immediately — main loop starts generating next track while this one plays
 
     async def _wait_for_track_end(self):
         """Wait for the current track to end naturally or for user to react."""

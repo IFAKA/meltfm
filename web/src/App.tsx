@@ -7,6 +7,7 @@ import ReactionInput from "./components/ReactionInput";
 import GenerationBadge from "./components/GenerationBadge";
 import History from "./components/History";
 import EventLog from "./components/EventLog";
+import DevPanel from "./components/DevPanel";
 import RadioDropdown from "./components/RadioDropdown";
 import ShareOverlay from "./components/ShareOverlay";
 import CleanDataDialog from "./components/CleanDataDialog";
@@ -31,6 +32,17 @@ export default function App() {
       />
     );
   }
+
+  const devPanelProps = {
+    pipeline: state.pipeline,
+    generationParams: state.generationParams,
+    connected: state.connected,
+    generating: state.generating,
+    queueReady: state.queueReady,
+    llmDurationMs: state.llmDurationMs,
+    aceDurationMs: state.aceDurationMs,
+    generationElapsed: state.generationElapsed,
+  };
 
   return (
     <div className="h-full flex flex-col md:grid md:grid-cols-[2fr_3fr] overflow-hidden">
@@ -83,8 +95,9 @@ export default function App() {
             <History radioName={state.radioName} nowPlayingId={state.nowPlaying?.id} />
           </div>
 
-          {/* Event log: inline on mobile (collapsed by default), hidden on desktop */}
+          {/* DevPanel + Event log: inline on mobile (collapsed by default), hidden on desktop */}
           <div className="md:hidden">
+            <DevPanel {...devPanelProps} defaultCollapsed />
             <EventLog events={state.events} defaultCollapsed />
           </div>
         </div>
@@ -113,6 +126,7 @@ export default function App() {
         <div className="flex-1 min-h-0 overflow-y-auto">
           <History radioName={state.radioName} nowPlayingId={state.nowPlaying?.id} />
         </div>
+        <DevPanel {...devPanelProps} />
         <EventLog events={state.events} />
       </div>
 
