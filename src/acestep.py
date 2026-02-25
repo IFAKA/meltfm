@@ -49,7 +49,7 @@ async def generate_track(params: dict, output_path) -> tuple[bool, str]:
     if params.get("time_signature"):
         ts = params["time_signature"]
         # API expects "4/4" format; our LLM returns int (3, 4, 6)
-        ts_map = {3: "3/4", 4: "4/4", 6: "6/8"}
+        ts_map = {2: "2/4", 3: "3/4", 4: "4/4", 6: "6/8"}
         audio_config["time_signature"] = ts_map.get(int(ts), f"{ts}/4")
     if not instrumental and params.get("vocal_language"):
         audio_config["vocal_language"] = params["vocal_language"]

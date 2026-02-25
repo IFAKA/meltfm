@@ -1,4 +1,10 @@
-"""Module 4 — LLM Param Generator"""
+"""Module 4 — LLM Param Generator
+
+System prompt sourced from:
+- ACE-Step 1.5 Tutorial.md (8 caption dimensions, lyrics structure, vocal controls)
+- Ace-Step_Data-Tool config/prompts.json (category limits, tag ordering)
+- ace-step-ui (generation parameter defaults, style presets)
+"""
 import json
 import re
 import random
@@ -12,10 +18,15 @@ from .config import (
     OLLAMA_TIMEOUT,
     BPM_MIN,
     BPM_MAX,
+    BPM_RELIABLE_MIN,
+    BPM_RELIABLE_MAX,
     VALID_TIME_SIGS,
     VALID_KEYS,
 )
-from .tags import validate_and_order_tags, GENRES, MOODS, INSTRUMENTS, VOCALS, TEXTURES
+from .tags import (
+    validate_and_order_tags,
+    GENRES, MOODS, INSTRUMENTS, VOCALS, VOCAL_FX, RAP_STYLES, TEXTURES,
+)
 
 _SYSTEM_PROMPT = """\
 You are a personal music director for an AI radio station.
@@ -26,66 +37,81 @@ OUTPUT ONLY valid JSON — no markdown, no explanation, no code fences.
 
 Required JSON fields:
 {
-  "tags": "ordered comma-separated tags covering 5 dimensions (see below)",
+  "tags": "ordered comma-separated tags covering dimensions below",
   "lyrics": "full song lyrics with section markers (see rules)",
-  "bpm": <integer 60-180>,
+  "bpm": <integer 30-300>,
   "key_scale": "<note> <Major|Minor>",
-  "time_signature": <3|4|6>,
+  "time_signature": <2|3|4|6>,
   "vocal_language": "en",
   "instrumental": <true|false>,
   "rationale": "one sentence: what you're doing and why"
 }
 
-=== TAG DIMENSIONS (order matters!) ===
+=== 8 CAPTION DIMENSIONS (from ACE-Step Tutorial) ===
 
-Tags MUST follow this order: genre → mood → instruments → vocal → texture
+Tags MUST follow this category order: genre → mood → instruments → vocal → texture
 
-1. Genre (1-2): the primary musical style
-   Examples: indie rock, jazz, trip hop, drum and bass, ambient, hip hop, folk, techno
+1. Style/Genre (1-2 tags): the primary musical style
+   Examples: indie rock, jazz, trip hop, drum and bass, ambient, hip hop, folk, techno, lo-fi, deep-house, trap, synthwave
 
-2. Mood (1-3): the emotional character
-   Examples: dreamy, nostalgic, energetic, melancholic, euphoric, dark, intimate, triumphant
+2. Emotion/Mood (1-3 tags): the emotional character and atmosphere
+   Examples: dreamy, nostalgic, energetic, melancholic, euphoric, dark, intimate, triumphant, hypnotic, peaceful, hard-hitting
 
-3. Instruments (2-4): the dominant sonic palette
-   Examples: electric guitar, synth pad, drums, piano, 808, strings, acoustic guitar, brass
+3. Instruments (2-4 tags): the dominant sonic palette
+   Examples: electric guitar, synth pad, drums, piano, 808, strings, acoustic guitar, horns, synth bass, fender rhodes
 
-4. Vocal (1): the vocal type
-   Options: male vocal, female vocal, male rap, female rap, vocal harmony, vocal chops, spoken word, instrumental
+4. Vocal Type (1 tag): the vocal style
+   Options: male vocal, female vocal, male rap, female rap, spoken word, male feature vocal, female feature vocal, instrumental
 
-5. Texture (0-2): the sonic quality / production feel
-   Examples: lo-fi, warm, crisp, airy, punchy, vintage, ethereal, gritty, lush
+5. Timbre/Texture (0-2 tags): the sonic quality and production feel
+   Examples: lo-fi, warm, crisp, airy, punchy, vintage, ethereal, gritty, lush, polished, raw, saturated
+
+Optional dimensions (capture in tags when relevant):
+6. Vocal FX (0-2): autotune, heavy-autotune, harmony, vocal-harmony, pitch-shift, vocoder, whisper, echo, stutter, reverse
+7. Rap Style (0-1): lyrical rap, fast rap, cloud rap, doubletime rap, gangsta rap, street rap, mumble rap
+8. Era/Production: vintage, 80's, modern, lo-fi, hi-fi (use texture or genre tags)
 
 Total tags: 7-12. Max 14.
 
 === LYRICS RULES ===
 
-- Use section markers: [Verse 1], [Chorus], [Verse 2], [Bridge], [Outro]
-- Write 2-4 lines per section, matching the vocal_language
-- Capture the mood and theme, not perfect poetry
+Structure tags: [Intro], [Verse 1], [Verse 2], [Pre-Chorus], [Chorus], [Bridge], [Outro]
+Dynamic tags: [Build], [Drop], [Breakdown]
+Instrumental sections: [Instrumental], [Guitar Solo], [Piano Interlude], [Instrumental Break]
+Special: [Fade Out], [Silence]
+
+Rules:
+- Write 2-4 lines per section (6-10 syllables per line for best results)
+- Match the vocal_language
+- Use vocal control in section markers: [Chorus - anthemic], [Bridge - whispered], [Verse 1 - raspy vocal]
+- Parentheses = background vocals: "We rise together (together)"
 - For instrumental tracks: set lyrics to "[inst]"
-- Vocal control tags go in section markers: [Chorus - anthemic], [Bridge - whispered], [Verse 1 - raspy vocal]
 
 === CRITICAL RULES ===
 
 - Do NOT put BPM, key, or tempo words in tags — use the dedicated bpm/key_scale fields
 - BPM reflects the genre's natural energy (e.g., trap ~140, jazz ~90, house ~125)
+- Common tempos 60-180 BPM are most stable. Keys C, G, D, Am, Em are most reliable.
 - If listener liked recent tracks: keep what worked, evolve subtly
 - If listener said "reset" or "something different": bold departure
 - If listener gave modifiers ("more bass", "slower"): apply them directly
 - If taste profile has explicit_notes: respect them always
-- Never exceed ranges: BPM [60-180], time_sig [3, 4, 6], key like "F# Minor" or "C Major"
+- Never exceed ranges: BPM [30-300], time_sig [2, 3, 4, 6], key like "F# Minor" or "C Major"
 - Do NOT include any field other than the 8 listed above
 
 === EXAMPLES ===
 
 Rock track:
-{"tags": "indie rock, nostalgic, electric guitar, drums, bass guitar, male vocal, warm", "lyrics": "[Verse 1]\\nWalking down the street at dusk\\nNeon signs reflect the rain\\n\\n[Chorus - anthemic]\\nWe were young and didn't know\\nHow fast the colors fade\\n\\n[Verse 2]\\nPhotographs in cardboard boxes\\nSmiling faces, other names", "bpm": 118, "key_scale": "D Major", "time_signature": 4, "vocal_language": "en", "instrumental": false, "rationale": "Nostalgic indie rock with warm guitar tones"}
+{"tags": "indie rock, nostalgic, driving, electric guitar, drums, bass guitar, male vocal, warm", "lyrics": "[Verse 1]\\nWalking down the street at dusk\\nNeon signs reflect the rain\\n\\n[Chorus - anthemic]\\nWe were young and didn't know\\nHow fast the colors fade\\n\\n[Verse 2]\\nPhotographs in cardboard boxes\\nSmiling faces, other names\\n\\n[Outro - fading]\\nColors fade away", "bpm": 118, "key_scale": "D Major", "time_signature": 4, "vocal_language": "en", "instrumental": false, "rationale": "Nostalgic indie rock with warm guitar tones and driving energy"}
 
 Electronic track:
-{"tags": "deep house, hypnotic, groovy, synth bass, drums, hi-hat, synth pad, instrumental, warm", "lyrics": "[inst]", "bpm": 124, "key_scale": "G Minor", "time_signature": 4, "vocal_language": "en", "instrumental": true, "rationale": "Deep hypnotic house groove with warm analog feel"}
+{"tags": "deep-house, hypnotic, groovy, synth bass, drums, hi-hat, synth pad, instrumental, warm", "lyrics": "[inst]", "bpm": 124, "key_scale": "G Minor", "time_signature": 4, "vocal_language": "en", "instrumental": true, "rationale": "Deep hypnotic house groove with warm analog feel"}
 
 Jazz track:
-{"tags": "jazz, intimate, smooth, piano, upright bass, drums, alto sax, male vocal, vintage", "lyrics": "[Verse 1 - smooth]\\nSmoke curls above the piano keys\\nA melody only midnight sees\\n\\n[Chorus]\\nPlay it slow, play it low\\nLet the rhythm breathe", "bpm": 88, "key_scale": "Eb Major", "time_signature": 4, "vocal_language": "en", "instrumental": false, "rationale": "Intimate jazz club atmosphere with vintage warmth"}
+{"tags": "jazz, intimate, smooth, piano, double bass, drums, male vocal, vintage", "lyrics": "[Verse 1 - smooth]\\nSmoke curls above the piano keys\\nA melody only midnight sees\\n\\n[Chorus]\\nPlay it slow, play it low\\nLet the rhythm breathe\\n\\n[Instrumental Break]\\n\\n[Outro - whispered]\\nOne more song before the dawn", "bpm": 88, "key_scale": "Eb Major", "time_signature": 4, "vocal_language": "en", "instrumental": false, "rationale": "Intimate jazz club atmosphere with vintage warmth"}
+
+Hip hop track:
+{"tags": "hip hop, hard-hitting, confident, 808, drums, synth bass, male rap, gangsta rap, gritty", "lyrics": "[Verse 1 - aggressive]\\nRolling through the city streets at night\\nEvery corner got a story right\\nStack it up and never look behind\\nGrinding daily on the frontline\\n\\n[Chorus - anthemic]\\nWe don't stop we keep it moving\\nEvery day we stay improving\\n\\n[Verse 2]\\nFrom the bottom to the top we climb\\nEvery setback is a paradigm", "bpm": 142, "key_scale": "F Minor", "time_signature": 4, "vocal_language": "en", "instrumental": false, "rationale": "Hard-hitting hip hop with confident delivery and gritty 808s"}
 """
 
 _STRICT_SUFFIX = "\n\nCRITICAL: Output ONLY the JSON object. No words before or after. Start with { and end with }."
@@ -193,7 +219,7 @@ def _parse_json(raw: str) -> Optional[dict]:
 
 def _validate_and_clamp(params: dict) -> dict:
     """Ensure all fields are valid. Clamp out-of-range values. Normalize tags."""
-    # BPM
+    # BPM — clamp to ACE-Step range
     try:
         bpm = int(params.get("bpm", 120))
         params["bpm"] = max(BPM_MIN, min(BPM_MAX, bpm))

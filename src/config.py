@@ -27,10 +27,14 @@ OLLAMA_TIMEOUT = int(os.getenv("OLLAMA_TIMEOUT", "90"))
 DEFAULT_DURATION = int(os.getenv("DEFAULT_DURATION", "120"))
 DEFAULT_INFER_STEPS = int(os.getenv("DEFAULT_INFER_STEPS", "27"))
 
-# ─── Hard limits ──────────────────────────────────────────────────────────────
-BPM_MIN = 60
-BPM_MAX = 180
-VALID_TIME_SIGS = [3, 4, 6]
+# ─── Hard limits (from ACE-Step 1.5 constants.py) ────────────────────────────
+BPM_MIN = 30
+BPM_MAX = 300
+# Note: Tutorial says "common tempos 60-180 BPM are most reliable"
+BPM_RELIABLE_MIN = 60
+BPM_RELIABLE_MAX = 180
+
+VALID_TIME_SIGS = [2, 3, 4, 6]  # 2/4, 3/4, 4/4, 6/8
 VALID_KEYS = [
     "C Major", "C Minor", "C# Major", "C# Minor",
     "Db Major", "Db Minor", "D Major", "D Minor",
@@ -41,6 +45,16 @@ VALID_KEYS = [
     "Ab Major", "Ab Minor", "A Major", "A Minor",
     "A# Major", "A# Minor", "Bb Major", "Bb Minor",
     "B Major", "B Minor",
+]
+
+# Languages (from ACE-Step 1.5 constants.py — 51 codes)
+VALID_LANGUAGES = [
+    "ar", "az", "bg", "bn", "ca", "cs", "da", "de", "el", "en",
+    "es", "fa", "fi", "fr", "he", "hi", "hr", "ht", "hu", "id",
+    "is", "it", "ja", "ko", "la", "lt", "ms", "ne", "nl", "no",
+    "pa", "pl", "pt", "ro", "ru", "sa", "sk", "sr", "sv", "sw",
+    "ta", "te", "th", "tl", "tr", "uk", "ur", "vi", "yue", "zh",
+    "unknown",
 ]
 
 # Taste profile history limits

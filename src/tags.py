@@ -1,121 +1,143 @@
 """Tag whitelists, normalization, and validation for ACE-Step prompt pipeline.
 
-Adapted from:
-- Ace-Step_Data-Tool presets/moods.md (whitelists)
-- Ace-Step_Data-Tool tag_processor.py (normalization, fuzzy matching, ordering)
-- ACE-Step 1.5 Tutorial.md (tag dimensions, vocal controls)
+Sourced from:
+- Ace-Step_Data-Tool presets/moods.md (genre, mood, instrument, vocal, vocal_fx whitelists)
+- Ace-Step_Data-Tool scripts/helpers/tag_processor.py (aliases, fuzzy matching, conflicts)
+- Ace-Step_Data-Tool config/prompts.json (category limits, max_total_tags)
+- ACE-Step 1.5 Tutorial.md (timbre/texture dimension, lyrics tags, caption structure)
 """
 import difflib
 import re
 
-# ── Whitelists ────────────────────────────────────────────────────────────────
+# ── Whitelists (from Ace-Step_Data-Tool presets/moods.md) ─────────────────────
 
 GENRES = [
-    "acoustic", "afrobeat", "ambient", "atmospheric", "bluegrass", "blues",
-    "bossa nova", "breakbeat", "britpop", "celtic", "chillwave", "choir",
-    "cinematic", "classical", "country", "dance", "dark ambient", "deep house",
-    "disco", "downtempo", "dream pop", "drill", "drum and bass", "dub",
-    "dubstep", "edm", "electro", "electronic", "emo", "ethereal", "experimental",
-    "flamenco", "folk", "funk", "future bass", "garage", "gospel", "grime",
-    "grunge", "hardcore", "hardstyle", "hip hop", "house", "idm", "indie",
-    "indie folk", "indie pop", "indie rock", "industrial", "j-pop", "jazz",
-    "k-pop", "latin", "lo-fi", "lounge", "math rock", "metal", "minimal",
-    "neo soul", "new wave", "noise", "orchestral", "phonk", "pop", "pop rock",
-    "post punk", "post rock", "progressive", "psych rock", "punk", "r&b",
-    "rap", "reggae", "reggaeton", "rock", "shoegaze", "ska", "soul",
-    "synthpop", "synth pop", "techno", "trance", "trap", "trip hop",
+    "60s", "70s", "80's", "acid", "acid house", "acid lounge", "afrobeat",
+    "ambiance", "ambient", "ambient rock", "ballad", "baroque", "big band",
+    "bluegrass", "blues", "blues rock", "bollywood", "boogie-woogie", "bossa nova",
+    "brit rock", "chill-out", "christmas", "cinematic", "classical", "country",
+    "country folk", "dance", "dancehall", "deep-house", "disco", "dream pop",
+    "drill", "drum and bass", "dubstep", "edm", "electro", "electronic",
+    "europop", "experimental", "film score", "folk", "funk", "funky house",
+    "garage", "grunge", "hardcore", "heavy metal", "hip hop", "house",
+    "hybrid orchestral", "indie", "indie pop", "indie rock", "industrial",
+    "jazz", "k-pop", "lo-fi", "mambo", "math rock", "metal", "neo soul",
+    "new wave", "nu metal", "orchestral", "phonk", "pop", "post punk",
+    "post rock", "progressive house", "psych rock", "psychedelic", "punk",
+    "r&b", "rap", "reggae", "reggaeton", "rhumba", "rock", "rock and roll",
+    "rockabilly", "salsa", "shoegaze", "singer songwriter", "ska", "soul",
+    "swing", "synth pop", "synthwave", "techno", "trance", "trap", "trip hop",
     "vaporwave", "world",
 ]
 
 MOODS = [
-    "adventurous", "aggressive", "ambient", "angelic", "angry", "anxious",
-    "atmospheric", "beautiful", "blissful", "bouncy", "breezy", "bright",
-    "brooding", "calm", "carefree", "celebratory", "cheerful", "cinematic",
-    "contemplative", "cool", "cosmic", "cozy", "dark", "deep", "defiant",
-    "delicate", "dramatic", "dreamy", "driving", "dynamic", "eerie",
-    "elegant", "emotional", "energetic", "epic", "ethereal", "euphoric",
-    "exotic", "fierce", "floating", "funky", "gentle", "gloomy", "graceful",
-    "gritty", "groovy", "haunting", "heartfelt", "heavy", "hopeful",
-    "hypnotic", "intense", "intimate", "introspective", "joyful", "lazy",
-    "lively", "lonely", "lush", "majestic", "meditative", "melancholic",
-    "mellow", "menacing", "mysterious", "nocturnal", "nostalgic", "ominous",
-    "optimistic", "passionate", "peaceful", "playful", "powerful", "pulsing",
-    "raw", "rebellious", "reflective", "relaxed", "romantic", "sad",
-    "sensual", "serene", "shimmering", "smooth", "sombre", "soothing",
-    "spacious", "spiritual", "sultry", "suspenseful", "sweet", "tender",
-    "tense", "triumphant", "upbeat", "uplifting", "urgent", "vibrant",
-    "warm", "wistful", "yearning",
+    "action", "adventurous", "aggressive", "ambient", "angelic", "angry",
+    "atmospheric", "beautiful", "bouncy", "bright", "catchy", "charm",
+    "cheerful", "childlike", "chilled", "cinematic", "clapping", "clumsy",
+    "cold", "colorful", "confident", "cool", "courageous", "creepy", "cute",
+    "danceable", "dancing", "danger", "daring", "dark", "deep", "depressing",
+    "dirty", "downbeat", "dramatic", "dreamy", "driving", "dynamic",
+    "emotional", "energetic", "epic", "ethereal", "euphoric", "evolving",
+    "excited", "expansive", "experimental", "family", "feel good", "fierce",
+    "frantic", "frightening", "frisky", "fun", "funny", "funky", "futuristic",
+    "gangsta attitude", "gentle", "glamorous", "glitchy", "good time", "groovy",
+    "hard", "hard-hitting", "haunting", "heavy", "heroic", "high-energy",
+    "holiday", "hopeful", "humorous", "hypnotic", "inquisitive",
+    "inspirational", "intense", "intimate", "joyful", "lonely", "lost", "love",
+    "lustful", "magical", "meditative", "melancholic", "mellow", "melodic",
+    "motivational", "mysterious", "narrative", "nervous", "nostalgic",
+    "optimistic", "otherworldly", "party", "passionate", "peaceful", "playful",
+    "poetic", "positive", "powerful", "rebellious", "relaxed", "relentless",
+    "religious", "restless", "romantic", "royal", "sad", "scary", "sentimental",
+    "sexy", "smooth", "soulful", "storytelling", "summer", "sunshine",
+    "suspense", "thoughtful", "triumphant", "understated", "uplifting",
+    "vicious", "vulnerable", "youth",
 ]
 
 INSTRUMENTS = [
-    "808", "accordion", "acoustic guitar", "alto sax", "banjo", "bass",
-    "bass guitar", "bassoon", "bells", "brass", "cello", "choir",
-    "clarinet", "congas", "cymbals", "distorted guitar", "double bass",
-    "drum machine", "drums", "electric bass", "electric guitar",
-    "electric piano", "fiddle", "flute", "french horn", "glockenspiel",
-    "harp", "harpsichord", "hi-hat", "horns", "keys", "kick drum",
-    "mandolin", "marimba", "mellotron", "moog", "oboe", "organ",
-    "pad", "percussion", "piano", "plucked strings", "rhodes",
-    "sitar", "snare", "steel drum", "strings", "sub bass", "synth",
-    "synth bass", "synth lead", "synth pad", "synth strings", "tabla",
-    "tambourine", "tenor sax", "theremin", "timpani", "trombone",
-    "trumpet", "tuba", "ukulele", "upright bass", "vibraphone", "viola",
-    "violin", "vocoder", "woodwinds", "wurlitzer", "xylophone",
+    "808", "acoustic bass", "acoustic drums", "acoustic guitar", "acoustic piano",
+    "action strings", "african drums", "arp", "arpeggio", "atmosphere",
+    "bass drum", "bass guitar", "bells", "big drums", "celesta", "cello",
+    "choir", "cinematic drums", "claps", "clarinet", "classical piano",
+    "deep bass", "double bass", "drums", "electric bass", "electric guitar",
+    "electric piano", "electronic drums", "epic drums", "epic strings",
+    "ethnic instruments", "ethnic percussion", "fender rhodes", "flute",
+    "grand piano", "guitar", "hard drums", "harpsichord", "heavy bass",
+    "hi-hat", "horns", "industrial drums", "keyboard", "keys", "male choir",
+    "mallet", "metal guitar", "muted guitar", "oboe", "ocarina", "orchestra",
+    "organ", "church organ", "pads", "percussion", "piano", "pizzicato",
+    "pizzicato strings", "pluck", "samples", "sitar", "snare",
+    "spanish guitar", "staccato strings", "strings", "sub bass", "synth",
+    "synth arp", "synth bass", "synth bell", "synth pad", "synthesizer",
+    "tabla", "taiko drums", "timpani", "trombone", "trumpets", "tuba",
+    "turntables", "viola", "violin", "vocoder", "voices", "vox", "whistle",
+    "women choir", "woodwinds", "world instruments",
 ]
 
 VOCALS = [
     "male vocal", "female vocal", "male rap", "female rap",
-    "vocal harmony", "vocal chops", "spoken word", "instrumental",
+    "spoken word", "male feature vocal", "female feature vocal", "instrumental",
 ]
 
 VOCAL_FX = [
-    "autotune", "chorus effect", "delay throw", "distorted vocal",
-    "double tracked", "echo", "falsetto", "filtered vocal",
-    "harmony", "layered vocals", "megaphone", "octave vocal",
-    "pitch-shift", "reverb vocal", "robotic vocal", "slap-back",
-    "telephone vocal", "vocoder", "vocal fry", "whisper vocal",
-    "wide stereo vocal",
+    "autotune", "heavy-autotune", "subtle-autotune", "harmony", "vocal-harmony",
+    "doubling", "vocal-doubling", "pitch-shift", "pitch-up", "pitch-down",
+    "high-pitch", "low-pitch", "vocoder", "formant-shift", "delay", "robotic",
+    "whisper", "echo", "chopped", "stutter", "reverse",
 ]
 
+RAP_STYLES = [
+    "lyrical rap", "fast rap", "cloud rap", "doubletime rap",
+    "gangsta rap", "street rap", "mumble rap",
+]
+
+# Timbre/texture (from ACE-Step 1.5 Tutorial — Timbre Texture + Production Style)
 TEXTURES = [
-    "airy", "analog", "atmospheric", "bitcrushed", "bright", "clean",
-    "compressed", "crisp", "crunchy", "dark", "deep", "dense", "digital",
-    "distorted", "dry", "dusty", "ethereal", "fat", "filtered", "fizzy",
-    "full", "fuzzy", "glitchy", "grainy", "gritty", "heavy", "hollow",
-    "icy", "layered", "light", "lo-fi", "lush", "metallic", "muddy",
-    "organic", "polished", "punchy", "raw", "resonant", "reverberant",
-    "rich", "saturated", "sharp", "shimmery", "silky", "smooth", "soft",
-    "spacious", "sparse", "stuttered", "tape-saturated", "thick", "thin",
-    "tight", "tinny", "vintage", "warm", "washy", "wet", "wide",
+    "airy", "bright", "clean", "crisp", "crunchy", "dark", "deep", "distorted",
+    "dusty", "ethereal", "fat", "fuzzy", "glitchy", "grainy", "gritty", "heavy",
+    "hi-fi", "icy", "layered", "lo-fi", "lush", "muddy", "organic", "polished",
+    "punchy", "raw", "reverberant", "rich", "saturated", "sharp", "shimmery",
+    "silky", "smooth", "spacious", "tape-saturated", "thick", "thin", "tight",
+    "vintage", "warm", "washy", "wet", "wide",
 ]
 
 # ── Aliases (from tag_processor.py _build_alias_map) ─────────────────────────
 
 ALIASES: dict[str, str] = {
+    # Genre aliases
     "hip-hop": "hip hop",
     "hiphop": "hip hop",
+    "chill out": "chill-out",
+    "chillout": "chill-out",
+    "drum n bass": "drum and bass",
+    "drum'n'bass": "drum and bass",
     "dnb": "drum and bass",
     "d&b": "drum and bass",
     "d'n'b": "drum and bass",
+    "deep house": "deep-house",
+    "synthpop": "synth pop",
+    "electropop": "synth pop",
+    "electro-pop": "synth pop",
     "rnb": "r&b",
     "r'n'b": "r&b",
+    "r and b": "r&b",
     "rhythm and blues": "r&b",
+    "film scores": "film score",
+    "feel-good": "feel good",
+    "high energy": "high-energy",
+    "hard hitting": "hard-hitting",
     "lofi": "lo-fi",
     "lo fi": "lo-fi",
-    "synthwave": "synth pop",
-    "electronica": "electronic",
     "alt rock": "indie rock",
     "alternative": "indie rock",
     "alternative rock": "indie rock",
-    "death metal": "metal",
-    "black metal": "metal",
+    "death metal": "heavy metal",
+    "black metal": "heavy metal",
     "thrash metal": "metal",
-    "heavy metal": "metal",
-    "nu metal": "metal",
-    "prog rock": "progressive",
-    "progressive rock": "progressive",
-    "prog": "progressive",
-    "psychedelic": "psych rock",
+    "prog rock": "progressive house",
+    "progressive rock": "progressive house",
+    "prog": "progressive house",
+    "psychedelic rock": "psych rock",
     "psych": "psych rock",
     "neosoul": "neo soul",
     "neo-soul": "neo soul",
@@ -127,26 +149,73 @@ ALIASES: dict[str, str] = {
     "post-punk": "post punk",
     "indierock": "indie rock",
     "indiepop": "indie pop",
-    "indiefolk": "indie folk",
-    "synthpop": "synth pop",
-    "futuregarage": "garage",
-    "future garage": "garage",
-    "latin pop": "latin",
-    "cumbia": "latin",
-    "salsa": "latin",
-    "samba": "bossa nova",
+    "indiefolk": "folk",
     "bossanova": "bossa nova",
+    "samba": "bossa nova",
     "african": "afrobeat",
     "afropop": "afrobeat",
     "afro": "afrobeat",
-    "goth": "dark ambient",
-    "dark wave": "dark ambient",
-    "darkwave": "dark ambient",
-    "chillout": "downtempo",
-    "chill out": "downtempo",
+    "goth": "industrial",
+    "dark wave": "industrial",
+    "darkwave": "industrial",
+    "electronica": "electronic",
     "bass music": "dubstep",
     "uk garage": "garage",
     "ukg": "garage",
+    "latin pop": "salsa",
+    "cumbia": "salsa",
+    "latin": "salsa",
+    # Instrument aliases
+    "string section": "strings",
+    "strings section": "strings",
+    "brass": "horns",
+    "brass section": "horns",
+    "horn section": "horns",
+    "basses": "bass guitar",
+    "kicks": "bass drum",
+    "choirs": "choir",
+    "synths": "synth",
+    "synthesizers": "synth",
+    "pads": "synth pad",
+    "string pad": "strings",
+    "lead synth": "synth",
+    "bass synth": "synth bass",
+    "electric bass guitar": "electric bass",
+    "acoustic bass guitar": "acoustic bass",
+    "standup bass": "double bass",
+    "stand-up bass": "double bass",
+    "upright bass": "double bass",
+    "sax": "woodwinds",
+    "saxophone": "woodwinds",
+    "alto sax": "woodwinds",
+    "tenor sax": "woodwinds",
+    "soprano sax": "woodwinds",
+    "ep": "electric piano",
+    "e-piano": "electric piano",
+    "rhodes": "fender rhodes",
+    "wurlitzer": "electric piano",
+    "wurli": "electric piano",
+    "keyboards": "keyboard",
+    "bongos": "percussion",
+    "hand drums": "percussion",
+    "djembe": "african drums",
+    "violins": "strings",
+    "cellos": "strings",
+    "violas": "strings",
+    "woodwind": "woodwinds",
+    "wind instruments": "woodwinds",
+    "click": "hi-hat",
+    "ride cymbal": "percussion",
+    "crash cymbal": "percussion",
+    "cymbals": "percussion",
+    "steel drums": "percussion",
+    "steel pan": "percussion",
+    "tambourine": "percussion",
+    "marimba": "mallet",
+    "xylophone": "mallet",
+    "vibraphone": "mallet",
+    "glockenspiel": "bells",
+    # Vocal aliases
     "male vocals": "male vocal",
     "female vocals": "female vocal",
     "male singer": "male vocal",
@@ -154,48 +223,16 @@ ALIASES: dict[str, str] = {
     "male voice": "male vocal",
     "female voice": "female vocal",
     "no vocals": "instrumental",
+    "no vocal": "instrumental",
     "no singing": "instrumental",
     "without vocals": "instrumental",
-    "vocal": "vocal harmony",
-    "vocals": "vocal harmony",
-    "backing vocals": "vocal harmony",
-    "synths": "synth",
-    "synthesizer": "synth",
-    "synthesizers": "synth",
-    "pads": "synth pad",
-    "string pad": "synth strings",
-    "lead synth": "synth lead",
-    "bass synth": "synth bass",
-    "electric bass guitar": "electric bass",
-    "acoustic bass": "upright bass",
-    "standup bass": "upright bass",
-    "stand-up bass": "upright bass",
-    "sax": "alto sax",
-    "saxophone": "alto sax",
-    "soprano sax": "alto sax",
-    "ep": "electric piano",
-    "e-piano": "electric piano",
-    "fender rhodes": "rhodes",
-    "wurli": "wurlitzer",
-    "keyboard": "keys",
-    "keyboards": "keys",
-    "bongos": "congas",
-    "hand drums": "congas",
-    "djembe": "congas",
-    "string section": "strings",
-    "violins": "strings",
-    "cellos": "strings",
-    "violas": "strings",
-    "brass section": "brass",
-    "horn section": "horns",
-    "woodwind": "woodwinds",
-    "wind instruments": "woodwinds",
-    "click": "hi-hat",
-    "ride cymbal": "cymbals",
-    "crash cymbal": "cymbals",
-    "steel drums": "steel drum",
-    "steel pan": "steel drum",
-    "pitched down": "pitch-shift",
+    "vocals": "singing",   # maps to non-whitelisted "singing" → gets dropped (real Data-Tool behavior)
+    "vocal": "singing",    # same — bare "vocal" is too ambiguous
+    "spoken": "spoken word",
+    "spokenword": "spoken word",
+    "backing vocals": "vocal-harmony",
+    # Vocal FX aliases
+    "pitched down": "pitch-down",
     "pitch shifted": "pitch-shift",
     "auto-tune": "autotune",
     "auto tune": "autotune",
@@ -203,56 +240,74 @@ ALIASES: dict[str, str] = {
     "talkbox": "vocoder",
 }
 
-# ── Category config ───────────────────────────────────────────────────────────
+# ── Category config (from Data-Tool config/prompts.json) ─────────────────────
 
 CATEGORY_LIMITS: dict[str, tuple[int, int]] = {
-    "genre":       (1, 2),
-    "mood":        (1, 3),
-    "instruments": (2, 4),
-    "vocal":       (1, 1),
-    "texture":     (0, 2),
+    "genre":       (1, 2),    # Data-Tool: (2,2) — relaxed min for generation
+    "mood":        (1, 3),    # Data-Tool: (3,3) — relaxed min for generation
+    "instruments": (2, 4),    # Data-Tool: (3,4) — relaxed min for generation
+    "vocal":       (1, 1),    # Data-Tool: (1,1)
+    "vocal_fx":    (0, 2),    # Data-Tool: (0,2)
+    "rap_style":   (0, 1),    # Data-Tool: (0,1)
+    "texture":     (0, 2),    # From Tutorial — not in Data-Tool
 }
 
 MAX_TOTAL_TAGS = 14
-TAG_ORDER = ["genre", "mood", "instruments", "vocal", "texture"]
+TAG_ORDER = ["genre", "mood", "instruments", "vocal", "vocal_fx", "rap_style", "texture"]
 
-# Build lookup sets for fast categorization
+# ── Lookup structures ────────────────────────────────────────────────────────
+
 _GENRE_SET = set(GENRES)
 _MOOD_SET = set(MOODS)
 _INSTRUMENT_SET = set(INSTRUMENTS)
 _VOCAL_SET = set(VOCALS)
 _VOCAL_FX_SET = set(VOCAL_FX)
+_RAP_STYLE_SET = set(RAP_STYLES)
 _TEXTURE_SET = set(TEXTURES)
 
-# Combined whitelist for fuzzy matching
+# Combined whitelist for fuzzy matching: tag → category
+# Built in REVERSE priority order so higher-priority categories overwrite lower ones.
+# Priority: genre > mood > instruments > vocal > rap_style > vocal_fx > texture
 _ALL_TAGS: dict[str, str] = {}
-for tag in GENRES:
-    _ALL_TAGS[tag] = "genre"
-for tag in MOODS:
-    _ALL_TAGS[tag] = "mood"
-for tag in INSTRUMENTS:
-    _ALL_TAGS[tag] = "instruments"
-for tag in VOCALS:
-    _ALL_TAGS[tag] = "vocal"
-for tag in VOCAL_FX:
-    _ALL_TAGS[tag] = "vocal"
-for tag in TEXTURES:
-    _ALL_TAGS[tag] = "texture"
+for _tag in TEXTURES:
+    _ALL_TAGS[_tag] = "texture"
+for _tag in VOCAL_FX:
+    _ALL_TAGS[_tag] = "vocal_fx"
+for _tag in RAP_STYLES:
+    _ALL_TAGS[_tag] = "rap_style"
+for _tag in VOCALS:
+    _ALL_TAGS[_tag] = "vocal"
+for _tag in INSTRUMENTS:
+    _ALL_TAGS[_tag] = "instruments"
+for _tag in MOODS:
+    _ALL_TAGS[_tag] = "mood"
+for _tag in GENRES:
+    _ALL_TAGS[_tag] = "genre"
 
-# Words to strip from tags (BPM/key/tempo shouldn't be in tags)
+# Patterns to strip from tags (BPM/key/tempo/time sig don't belong in tags)
 _STRIP_PATTERNS = re.compile(
     r"\b\d+\s*bpm\b|\bbpm\b|\btempo\b|\bkey of\b|"
-    r"\b[A-G][b#]?\s*(?:major|minor)\b|\bfast tempo\b|\bslow tempo\b",
+    r"\b[A-G][b#]?\s*(?:major|minor)\b|\bfast tempo\b|\bslow tempo\b|"
+    r"\btime\s+\d/\d\b",
     re.IGNORECASE,
 )
 
 
 def normalize_tag(tag: str) -> tuple[str | None, str | None]:
-    """Normalize a single tag: lowercase, alias, fuzzy match.
+    """Normalize a single tag: lowercase, collapse whitespace, alias, fuzzy match.
+
+    Pipeline adapted from Data-Tool tag_processor.py:
+    1. Lowercase + whitespace collapse
+    2. Drop if matches BPM/key/tempo pattern
+    3. Alias lookup
+    4. Direct whitelist match
+    5. Fuzzy match (SequenceMatcher >= 0.88)
 
     Returns (normalized_tag, category) or (None, None) if invalid.
     """
     tag = tag.strip().lower()
+    tag = re.sub(r"\s+", " ", tag)  # collapse whitespace
+    tag = tag.replace("\u2018", "'").replace("\u2019", "'")  # smart quotes
     if not tag or len(tag) < 2:
         return None, None
 
@@ -264,7 +319,7 @@ def normalize_tag(tag: str) -> tuple[str | None, str | None]:
     if tag in ALIASES:
         tag = ALIASES[tag]
 
-    # Exact match
+    # Direct match
     if tag in _ALL_TAGS:
         return tag, _ALL_TAGS[tag]
 
@@ -287,28 +342,59 @@ def categorize_tags(raw_tags: str) -> dict[str, list[str]]:
         normalized, category = normalize_tag(raw)
         if normalized and category and normalized not in seen:
             seen.add(normalized)
-            result[category].append(normalized)
+            if category in result:
+                result[category].append(normalized)
 
     return result
 
 
 def resolve_conflicts(tags_by_category: dict[str, list[str]]) -> dict[str, list[str]]:
-    """Resolve mutual exclusions (from Data-Tool).
+    """Resolve mutual exclusions (from Data-Tool tag_processor.py).
 
-    - 'instrumental' in vocal excludes all other vocal tags and vice versa.
+    Conflict rules:
+    - instrumental conflicts with all vocal types (male/female vocal/rap, spoken word)
+    - male vocal conflicts with female vocal (and vice versa)
+    - male rap conflicts with female rap (and vice versa)
+
+    Priority order: rap > vocal > spoken word > instrumental
     """
     vocals = tags_by_category.get("vocal", [])
+    if len(vocals) <= 1:
+        return tags_by_category
+
+    # Priority: rap types > vocal types > spoken word > instrumental
+    priority = ["male rap", "female rap", "male vocal", "female vocal",
+                "male feature vocal", "female feature vocal", "spoken word", "instrumental"]
+
+    # If instrumental is present with any vocal type, drop instrumental
     if "instrumental" in vocals and len(vocals) > 1:
-        tags_by_category["vocal"] = ["instrumental"]
+        vocals = [v for v in vocals if v != "instrumental"]
+
+    # If conflicting pairs exist, keep highest priority
+    conflict_pairs = [
+        ({"male vocal", "female vocal"}),
+        ({"male rap", "female rap"}),
+    ]
+    for pair in conflict_pairs:
+        present = [v for v in vocals if v in pair]
+        if len(present) > 1:
+            # Keep the one that appears first in priority
+            keeper = min(present, key=lambda v: priority.index(v) if v in priority else 99)
+            vocals = [v for v in vocals if v not in pair or v == keeper]
+
+    tags_by_category["vocal"] = vocals[:1]  # max 1 vocal type
     return tags_by_category
 
 
 def validate_and_order_tags(raw_tags: str) -> str:
-    """Full pipeline: split → normalize → categorize → resolve conflicts → enforce limits → order → rejoin."""
+    """Full pipeline: split → normalize → categorize → resolve conflicts → enforce limits → order → rejoin.
+
+    Adapted from Data-Tool tag_processor.py process_tags().
+    """
     by_cat = categorize_tags(raw_tags)
     by_cat = resolve_conflicts(by_cat)
 
-    # Enforce per-category limits
+    # Enforce per-category max limits
     for cat in TAG_ORDER:
         _, max_count = CATEGORY_LIMITS[cat]
         by_cat[cat] = by_cat[cat][:max_count]
