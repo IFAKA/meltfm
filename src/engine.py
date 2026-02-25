@@ -442,7 +442,7 @@ class RadioEngine:
                 asyncio.create_task(self._reaction_event.wait()),
             ]
             if not self._gen_task.done():
-                waiters.append(asyncio.create_task(asyncio.shield(self._gen_task)))
+                waiters.append(asyncio.shield(self._gen_task))
 
             done, pending = await asyncio.wait(waiters, timeout=1.0, return_when=asyncio.FIRST_COMPLETED)
             for p in pending:

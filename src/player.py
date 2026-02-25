@@ -1,10 +1,7 @@
-"""Module 6 — Audio Playback via afplay"""
+"""Module 6 — Virtual Playback Tracker (browser plays the audio via PWA)"""
 import asyncio
-import os
 import re
-import signal
 import subprocess
-import tempfile
 import time
 from pathlib import Path
 from typing import Optional
@@ -12,7 +9,6 @@ from typing import Optional
 
 def get_audio_duration(path: Path) -> float | None:
     """Get audio duration in seconds. Tries ffprobe first (accurate), falls back to afinfo."""
-    # ffprobe gives exact duration (afinfo's "estimated duration" can be wrong for VBR/AI-generated MP3s)
     try:
         result = subprocess.run(
             ["ffprobe", "-v", "quiet", "-show_entries", "format=duration",
@@ -24,7 +20,6 @@ def get_audio_duration(path: Path) -> float | None:
     except (FileNotFoundError, Exception):
         pass
 
-    # Fallback: afinfo (macOS built-in)
     try:
         result = subprocess.run(
             ["afinfo", str(path)],
@@ -37,8 +32,9 @@ def get_audio_duration(path: Path) -> float | None:
 
 
 class Player:
+    """Tracks playback state with asyncio timers. Audio is played by the browser."""
+
     def __init__(self):
-        self._proc: Optional[subprocess.Popen] = None
         self._current: Optional[Path] = None
         self._source: Optional[Path] = None
         self._paused: bool = False
@@ -48,20 +44,14 @@ class Player:
         self._paused_at: float = 0.0
         self._total_paused: float = 0.0
         self._seek_offset: float = 0.0
-        self._temp_file: Optional[Path] = None
         self._done_event: asyncio.Event = asyncio.Event()
         self._watcher_task: Optional[asyncio.Task] = None
 
     # ── Playback ───────────────────────────────────────────────────────────────
 
     def play(self, path: Path, duration: Optional[float] = None):
-        """Start afplay for the given file. Stops any current playback first."""
+        """Start virtual playback tracking. Browser plays the actual audio."""
         self.stop()
-        self._proc = subprocess.Popen(
-            ["afplay", "-v", str(self._volume / 100), str(path)],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
         self._done_event = asyncio.Event()
         self._current = path
         self._source = path
@@ -71,37 +61,12 @@ class Player:
         self._paused_at = 0.0
         self._total_paused = 0.0
         self._seek_offset = 0.0
-        # Reactive watcher — waits for afplay to exit, then sets the event
-        if self._watcher_task and not self._watcher_task.done():
-            self._watcher_task.cancel()
-        proc = self._proc
-        done_ev = self._done_event
-
-        async def _watch():
-            loop = asyncio.get_event_loop()
-            await loop.run_in_executor(None, proc.wait)
-            done_ev.set()
-
-        self._watcher_task = asyncio.create_task(_watch())
+        self._start_watcher(duration)
 
     def stop(self):
-        """Terminate playback and wait for process to clean up."""
-        if self._proc and self._proc.poll() is None:
-            if self._paused:
-                # Must resume before terminate — SIGSTOP blocks SIGTERM
-                try:
-                    os.kill(self._proc.pid, signal.SIGCONT)
-                except ProcessLookupError:
-                    pass
-            self._proc.terminate()
-            try:
-                self._proc.wait(timeout=2)
-            except subprocess.TimeoutExpired:
-                self._proc.kill()
+        """Stop virtual playback."""
+        self._cancel_watcher()
         self._done_event.set()
-        if self._watcher_task and not self._watcher_task.done():
-            self._watcher_task.cancel()
-        self._proc = None
         self._current = None
         self._source = None
         self._paused = False
@@ -110,159 +75,95 @@ class Player:
         self._paused_at = 0.0
         self._total_paused = 0.0
         self._seek_offset = 0.0
-        self._cleanup_temp()
 
     def pause(self):
-        """Suspend afplay in place (SIGSTOP). Position is preserved."""
-        if self._proc and self._proc.poll() is None and not self._paused:
-            try:
-                os.kill(self._proc.pid, signal.SIGSTOP)
-                self._paused = True
-                self._paused_at = time.monotonic()
-            except ProcessLookupError:
-                pass
+        """Pause virtual playback."""
+        if self._current and not self._paused:
+            self._paused = True
+            self._paused_at = time.monotonic()
+            self._cancel_watcher()
 
     def resume(self):
-        """Resume a paused track exactly where it left off (SIGCONT)."""
-        if self._proc and self._paused:
-            try:
-                os.kill(self._proc.pid, signal.SIGCONT)
-                if self._paused_at > 0:
-                    self._total_paused += time.monotonic() - self._paused_at
-                    self._paused_at = 0.0
-                self._paused = False
-            except ProcessLookupError:
-                self._paused = False
+        """Resume virtual playback from paused position."""
+        if self._current and self._paused:
+            if self._paused_at > 0:
+                self._total_paused += time.monotonic() - self._paused_at
+                self._paused_at = 0.0
+            self._paused = False
+            if self._duration is not None:
+                remaining = self._duration - self.elapsed
+                if remaining > 0:
+                    self._start_watcher(remaining)
 
     def toggle_pause(self):
-        """Pause if playing, resume if paused."""
         if self._paused:
             self.resume()
         else:
             self.pause()
 
     def is_playing(self) -> bool:
-        if self._proc is None:
+        if self._current is None or self._paused:
             return False
-        return self._proc.poll() is None
+        # Watcher done means the timer fired — track ended naturally
+        if self._watcher_task is None or self._watcher_task.done():
+            return False
+        return True
 
     def is_paused(self) -> bool:
-        return self._paused
+        return self._paused and self._current is not None
 
     def wait_done(self):
-        """Block until current track finishes naturally."""
-        if self._proc:
-            self._proc.wait()
+        """Sync wait — no-op in async context."""
+        pass
 
     async def wait_done_async(self):
-        """Async wait — returns immediately when the track ends (no polling)."""
+        """Async wait — returns when the virtual track timer expires or stop() is called."""
         await self._done_event.wait()
 
     def replay(self):
-        """Restart the current track from the beginning (gap-filler)."""
+        """Restart the current track from the beginning."""
         path = self._source or self._current
         if path and path.exists():
             saved_dur = self._duration
             self.play(path, duration=saved_dur)
 
     def seek(self, delta: float) -> float:
-        """Seek forward/backward by delta seconds. Returns new position.
-
-        Uses ffmpeg to create a trimmed temp file from the target position,
-        since afplay has no native seek support.
-        """
-        source = self._source
-        if not source or not source.exists():
-            return 0.0
-
+        """Update seek position. Browser performs the actual seek."""
         new_pos = max(0.0, self.elapsed + delta)
-        if self._duration:
+        if self._duration is not None:
             new_pos = min(new_pos, self._duration - 0.5)
-        if new_pos < 0:
-            new_pos = 0.0
 
-        self._cleanup_temp()
-
-        suffix = source.suffix or ".mp3"
-        tmp = Path(tempfile.mktemp(suffix=suffix))
-        try:
-            subprocess.run(
-                ["ffmpeg", "-y", "-loglevel", "error",
-                 "-ss", str(new_pos), "-i", str(source),
-                 "-c", "copy", str(tmp)],
-                capture_output=True, timeout=15,
-            )
-            if not tmp.exists() or tmp.stat().st_size < 100:
-                tmp.unlink(missing_ok=True)
-                return self.elapsed
-        except Exception:
-            tmp.unlink(missing_ok=True)
-            return self.elapsed
-
-        self._temp_file = tmp
-        saved_duration = self._duration
-        was_paused = self._paused
-
-        # Kill current afplay without full stop() (preserve _source)
-        if self._proc and self._proc.poll() is None:
-            if self._paused:
-                try:
-                    os.kill(self._proc.pid, signal.SIGCONT)
-                except ProcessLookupError:
-                    pass
-            self._proc.terminate()
-            try:
-                self._proc.wait(timeout=2)
-            except subprocess.TimeoutExpired:
-                self._proc.kill()
-        if self._watcher_task and not self._watcher_task.done():
-            self._watcher_task.cancel()
-        # Wake any coroutines awaiting the old event (e.g. _auto_advance)
-        # so they can re-check player state instead of hanging forever.
-        self._done_event.set()
-
-        # Start playing from temp file
-        self._proc = subprocess.Popen(
-            ["afplay", "-v", str(self._volume / 100), str(tmp)],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
+        self._cancel_watcher()
         self._done_event = asyncio.Event()
-        self._current = tmp
-        self._source = source
-        self._duration = saved_duration
-        self._paused = False
+        self._seek_offset = new_pos
         self._play_start = time.monotonic()
         self._paused_at = 0.0
         self._total_paused = 0.0
-        self._seek_offset = new_pos
 
-        # Watcher for new process
-        proc = self._proc
+        if not self._paused and self._duration is not None:
+            remaining = self._duration - new_pos
+            if remaining > 0:
+                self._start_watcher(remaining)
+
+        return new_pos
+
+    # ── Internal helpers ───────────────────────────────────────────────────────
+
+    def _start_watcher(self, duration: Optional[float]):
+        """Start asyncio task that sets done_event after duration seconds."""
         done_ev = self._done_event
+        sleep_for = duration if (duration and duration > 0) else 7200.0
 
         async def _watch():
-            loop = asyncio.get_event_loop()
-            await loop.run_in_executor(None, proc.wait)
+            await asyncio.sleep(sleep_for)
             done_ev.set()
 
         self._watcher_task = asyncio.create_task(_watch())
 
-        # If was paused, pause again at new position
-        if was_paused:
-            time.sleep(0.05)
-            self.pause()
-
-        return new_pos
-
-    def _cleanup_temp(self):
-        """Remove any temporary seek file."""
-        if self._temp_file:
-            try:
-                self._temp_file.unlink(missing_ok=True)
-            except OSError:
-                pass
-            self._temp_file = None
+    def _cancel_watcher(self):
+        if self._watcher_task and not self._watcher_task.done():
+            self._watcher_task.cancel()
+        self._watcher_task = None
 
     @property
     def elapsed(self) -> float:
@@ -287,23 +188,16 @@ class Player:
 
     def volume_up(self, step: int = 10) -> int:
         self._volume = min(100, self._volume + step)
-        self._apply_volume()
         return self._volume
 
     def volume_down(self, step: int = 10) -> int:
         self._volume = max(0, self._volume - step)
-        self._apply_volume()
         return self._volume
 
     def set_volume(self, level: int) -> int:
         self._volume = max(0, min(100, level))
-        self._apply_volume()
         return self._volume
 
     def _apply_volume(self):
-        """Restart afplay at current position with new volume level."""
-        if not self.is_playing() and not self._paused:
-            return
-        # Seek by 0 seconds — restarts afplay at current position,
-        # which picks up the new self._volume via the -v flag.
-        self.seek(0)
+        """No-op — volume is handled by the browser."""
+        pass
