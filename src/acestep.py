@@ -2,7 +2,7 @@
 import base64
 import httpx
 
-from .config import ACESTEP_HOST, ACESTEP_TIMEOUT, DEFAULT_DURATION, ACESTEP_MODEL
+from .config import ACESTEP_HOST, ACESTEP_TIMEOUT, DEFAULT_DURATION, ACESTEP_MODEL, INFERENCE_STEPS, LM_TEMPERATURE, LM_CFG_SCALE
 
 
 async def check_server(host: str = ACESTEP_HOST) -> bool:
@@ -59,10 +59,14 @@ async def generate_track(params: dict, output_path) -> tuple[bool, str]:
         "messages": [{"role": "user", "content": _build_content(params)}],
         "audio_config": audio_config,
         "seed": params.get("seed", -1),
+        "inference_steps": INFERENCE_STEPS,
         # Use 5Hz LM to generate semantic audio codes (lm-dit pipeline, max quality)
         "thinking": True,
         "use_cot_caption": True,
         "use_cot_language": True,
+        # LM planner quality — tighter semantic blueprint
+        "lm_temperature": LM_TEMPERATURE,
+        "lm_cfg_scale": LM_CFG_SCALE,
     }
 
     try:
