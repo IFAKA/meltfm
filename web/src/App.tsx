@@ -80,7 +80,7 @@ export default function App() {
 
           {/* History: inline on mobile, hidden on desktop (shown in right panel) */}
           <div className="md:hidden">
-            <History radioName={state.radioName} />
+            <History radioName={state.radioName} nowPlayingId={state.nowPlaying?.id} />
           </div>
 
           {/* Event log: inline on mobile (collapsed by default), hidden on desktop */}
@@ -111,7 +111,7 @@ export default function App() {
       {/* ── Right panel — desktop only ── */}
       <div className="hidden md:flex md:flex-col border-l border-neutral-800 overflow-hidden">
         <div className="flex-1 min-h-0 overflow-y-auto">
-          <History radioName={state.radioName} />
+          <History radioName={state.radioName} nowPlayingId={state.nowPlaying?.id} />
         </div>
         <EventLog events={state.events} />
       </div>

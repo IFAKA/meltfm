@@ -14,9 +14,10 @@ type HistoryItem = {
 
 type Props = {
   radioName: string;
+  nowPlayingId?: string | null;  // re-fetches whenever a new track starts playing
 };
 
-export default function History({ radioName }: Props) {
+export default function History({ radioName, nowPlayingId }: Props) {
   const [items, setItems] = useState<HistoryItem[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -29,7 +30,7 @@ export default function History({ radioName }: Props) {
         setLoading(false);
       })
       .catch(() => setLoading(false));
-  }, [radioName]);
+  }, [radioName, nowPlayingId]);
 
   const reactionIcon = (r: string) => {
     if (r === "liked") return <span className="text-like">&#9829;</span>;
