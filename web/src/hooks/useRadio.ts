@@ -21,7 +21,7 @@ export type NowPlaying = {
 };
 
 /** Which phase of the generation pipeline is active. */
-export type PipelineStage = "idle" | "thinking" | "generating" | "error";
+export type PipelineStage = "idle" | "thinking" | "generating" | "ready" | "error";
 
 export type PipelineState = {
   stage: PipelineStage;
@@ -48,6 +48,7 @@ export type RadioState = {
   duration: number;     // local audio duration
   volume: number;
   generating: boolean;
+  queueReady: boolean;  // true = next track is generated and queued, waiting to play
   generationElapsed: number;
   generationParams: Record<string, unknown> | null;
   error: string | null;
@@ -66,6 +67,7 @@ export function useRadio() {
     duration: 0,
     volume: 80,
     generating: false,
+    queueReady: false,  // included in initial state
     generationElapsed: 0,
     generationParams: null,
     error: null,
@@ -80,6 +82,9 @@ export function useRadio() {
   const nowPlayingRef = useRef<NowPlaying | null>(null);
   const serverElapsedRef = useRef(0);
   const eventIdRef = useRef(0);
+  // Tracks whether now_playing fired after the current generation_start.
+  // Used to distinguish "track queued and ready" from "track already playing".
+  const nowPlayingAfterGenStart = useRef(false);
 
   const showToast = useCallback((msg: string) => {
     toast(msg);
@@ -149,9 +154,12 @@ export function useRadio() {
             const tag0 = np.tags?.split(",")[0]?.trim() ?? "track";
             const npEvt = mkEvent("now_playing", `▶ ${tag0}${np.bpm ? " · " + np.bpm + " BPM" : ""}`, "info");
             nowPlayingRef.current = np;
+            nowPlayingAfterGenStart.current = true;
             setState((s) => ({
               ...s,
               nowPlaying: np,
+              queueReady: false,
+              generationParams: null,
               pipeline: { ...s.pipeline, stage: "idle", llmDone: false },
               events: [npEvt, ...s.events].slice(0, 60),
             }));
@@ -195,9 +203,11 @@ export function useRadio() {
             const warnings: string[] = Array.isArray(msg.data.warnings) ? msg.data.warnings : [];
             const level: EventEntry["level"] = warnings.length > 0 ? "warn" : "info";
             const evt = mkEvent("generation_start", `ACE-Step: ${tag0}${bpmStr ? " · " + bpmStr : ""}`, level);
+            nowPlayingAfterGenStart.current = false;
             setState((s) => ({
               ...s,
               generating: true,
+              queueReady: false,
               generationElapsed: 0,
               generationParams: msg.data.params,
               pipeline: { stage: "generating", llmDone: true, warnings, lastError: null },
@@ -211,13 +221,18 @@ export function useRadio() {
             break;
 
           case "generation_done": {
-            const evt = mkEvent("generation_done", "Track ready", "info");
+            // If now_playing fired after generation_start, the track is already playing
+            // (immediate play on first track or auto-advance). Otherwise it's queued and ready.
+            const isQueued = !nowPlayingAfterGenStart.current;
+            const evt = mkEvent("generation_done", isQueued ? "Track queued — ready to play" : "Track ready", "info");
             setState((s) => ({
               ...s,
               generating: false,
+              queueReady: isQueued,
               generationElapsed: 0,
-              generationParams: null,
-              pipeline: { ...s.pipeline, stage: "idle" },
+              // Keep generationParams when queued so the badge can show track info
+              generationParams: isQueued ? s.generationParams : null,
+              pipeline: { ...s.pipeline, stage: isQueued ? "ready" : "idle" },
               events: [evt, ...s.events].slice(0, 60),
             }));
             break;
@@ -225,9 +240,11 @@ export function useRadio() {
 
           case "regenerating": {
             const evt = mkEvent("regenerating", `Regenerating: "${msg.data.reason}"`, "warn");
+            nowPlayingAfterGenStart.current = false;
             setState((s) => ({
               ...s,
               generating: true,
+              queueReady: false,
               generationElapsed: 0,
               generationParams: null,
               pipeline: { stage: "thinking", llmDone: false, warnings: [], lastError: null },
@@ -256,12 +273,15 @@ export function useRadio() {
 
           case "radio_switched": {
             const evt = mkEvent("radio_switched", `Switched to: ${msg.data.name}`, "info");
+            nowPlayingAfterGenStart.current = false;
             setState((s) => ({
               ...s,
               radioName: msg.data.name,
               isFirstRun: msg.data.is_new,
               nowPlaying: null,
               generating: false,
+              queueReady: false,
+              generationParams: null,
               pipeline: { stage: "idle", llmDone: false, warnings: [], lastError: null },
               events: [evt, ...s.events].slice(0, 60),
             }));

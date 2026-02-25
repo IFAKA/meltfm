@@ -1,6 +1,8 @@
 /**
  * Generation pipeline visualization.
  * Shows LLM → ACE-Step step indicators with live status.
+ * When the next track is fully generated and queued, shows a "Ready" state
+ * with a green check — no spinner.
  */
 import type { PipelineState } from "@/hooks/useRadio";
 
@@ -18,18 +20,52 @@ function StepDot({ status }: { status: StepStatus }) {
 
 type Props = {
   generating: boolean;
+  queueReady: boolean;
   elapsed: number;
   params: Record<string, unknown> | null;
   pipeline: PipelineState;
 };
 
-export default function GenerationBadge({ generating, elapsed, params, pipeline }: Props) {
-  if (!generating) return null;
+export default function GenerationBadge({ generating, queueReady, elapsed, params, pipeline }: Props) {
+  if (!generating && !queueReady) return null;
 
   const tags = typeof params?.tags === "string" ? params.tags : null;
   const bpm = typeof params?.bpm === "number" ? params.bpm : null;
 
-  // Derive step statuses from pipeline state
+  // When queued and ready — both steps are done, no spinners
+  if (queueReady) {
+    return (
+      <div className="mx-6 mb-3 rounded-lg border border-like/30 bg-like/5 overflow-hidden">
+        <div className="flex items-center gap-2 px-3 py-2 border-b border-like/20">
+          <span className="text-[10px] font-medium uppercase tracking-widest text-neutral-500">
+            Up Next
+          </span>
+          <div className="ml-auto flex items-center gap-1.5">
+            <StepDot status="done" />
+            <span className="text-[11px] font-medium text-neutral-400">LLM</span>
+            <span className="text-neutral-700 text-xs mx-0.5">→</span>
+            <StepDot status="done" />
+            <span className="text-[11px] font-medium text-neutral-400">ACE-Step</span>
+            <span className="text-[11px] font-medium text-like ml-1">✓ Ready</span>
+          </div>
+        </div>
+        <div className="px-3 py-2">
+          {tags ? (
+            <>
+              <div className="text-sm text-neutral-300 leading-snug truncate">{tags}</div>
+              {bpm && (
+                <div className="text-xs text-neutral-600 mt-0.5">{bpm} BPM</div>
+              )}
+            </>
+          ) : (
+            <div className="text-sm text-neutral-500 italic">Track ready</div>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  // Still generating — show live progress
   const llmStatus: StepStatus =
     pipeline.stage === "error" && !pipeline.llmDone ? "error" :
     pipeline.llmDone ? "done" :
@@ -37,7 +73,6 @@ export default function GenerationBadge({ generating, elapsed, params, pipeline 
 
   const aceStatus: StepStatus =
     pipeline.stage === "error" && pipeline.llmDone ? "error" :
-    pipeline.stage === "idle" && pipeline.llmDone ? "done" :
     pipeline.stage === "generating" ? "active" : "idle";
 
   const llmColor = { idle: "text-neutral-600", active: "text-radio-accent", done: "text-neutral-400", error: "text-dislike" }[llmStatus];

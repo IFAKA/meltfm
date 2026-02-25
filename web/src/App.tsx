@@ -70,6 +70,7 @@ export default function App() {
 
           <GenerationBadge
             generating={state.generating}
+            queueReady={state.queueReady}
             elapsed={state.generationElapsed}
             params={state.generationParams}
             pipeline={state.pipeline}
