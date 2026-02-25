@@ -1,9 +1,12 @@
 /**
  * Transport controls — dislike / pause / skip / like + volume slider.
  */
+import { Button } from "@/components/ui/button";
+import { Slider } from "@/components/ui/slider";
+import { X, Play, Pause, SkipForward, Heart, Bookmark, Volume2, RotateCcw } from "lucide-react";
 
 type Props = {
-  playing: boolean;
+  isPlaying: boolean;
   volume: number;
   onTogglePause: () => void;
   onSkip: () => void;
@@ -11,10 +14,11 @@ type Props = {
   onDislike: () => void;
   onSave: () => void;
   onVolumeChange: (level: number) => void;
+  onCleanData: () => void;
 };
 
 export default function Controls({
-  playing,
+  isPlaying,
   volume,
   onTogglePause,
   onSkip,
@@ -22,68 +26,84 @@ export default function Controls({
   onDislike,
   onSave,
   onVolumeChange,
+  onCleanData,
 }: Props) {
   return (
-    <div className="px-6 py-2">
-      {/* Main controls */}
-      <div className="flex items-center justify-center gap-8 mb-4">
-        {/* Dislike */}
-        <button
-          onClick={onDislike}
-          className="text-2xl text-neutral-400 hover:text-dislike active:scale-90 transition-all"
-          title="Dislike"
-        >
-          &#10007;
-        </button>
-
-        {/* Play/Pause */}
-        <button
-          onClick={onTogglePause}
-          className="w-14 h-14 rounded-full bg-white text-black flex items-center justify-center text-2xl active:scale-90 transition-transform"
-          title={playing ? "Pause" : "Play"}
-        >
-          {playing ? "\u23F8" : "\u25B6"}
-        </button>
-
-        {/* Skip */}
-        <button
-          onClick={onSkip}
-          className="text-2xl text-neutral-400 hover:text-white active:scale-90 transition-all"
-          title="Skip"
-        >
-          &#x23ED;
-        </button>
-
-        {/* Like */}
-        <button
-          onClick={onLike}
-          className="text-2xl text-neutral-400 hover:text-like active:scale-90 transition-all"
-          title="Like"
-        >
-          &#9829;
-        </button>
-      </div>
-
-      {/* Save button */}
-      <div className="flex justify-center mb-3">
-        <button
+    <div className="px-6 py-3 shrink-0">
+      {/* Main transport */}
+      <div className="flex items-center justify-center gap-6 mb-3">
+        <Button
+          variant="ghost"
+          size="icon-lg"
           onClick={onSave}
-          className="text-sm text-neutral-500 hover:text-skip transition-colors"
+          className="text-neutral-400 hover:text-skip hover:bg-transparent active:scale-90 transition-all"
           title="Save to favorites"
         >
-          &#9733; Save
-        </button>
+          <Bookmark className="size-5" />
+        </Button>
+
+        <Button
+          variant="ghost"
+          size="icon-lg"
+          onClick={onDislike}
+          className="text-neutral-400 hover:text-dislike hover:bg-transparent active:scale-90 transition-all"
+          title="Dislike"
+        >
+          <X className="size-6" />
+        </Button>
+
+        <Button
+          onClick={onTogglePause}
+          className="size-14 rounded-full bg-white! text-black hover:bg-white/90! active:scale-90 transition-transform"
+          title={isPlaying ? "Pause" : "Play"}
+        >
+          {isPlaying ? <Pause className="size-6" /> : <Play className="size-6" />}
+        </Button>
+
+        <Button
+          variant="ghost"
+          size="icon-lg"
+          onClick={onSkip}
+          className="text-neutral-400 hover:text-white hover:bg-transparent active:scale-90 transition-all"
+          title="Skip"
+        >
+          <SkipForward className="size-6" />
+        </Button>
+
+        <Button
+          variant="ghost"
+          size="icon-lg"
+          onClick={onLike}
+          className="text-neutral-400 hover:text-like hover:bg-transparent active:scale-90 transition-all"
+          title="Like"
+        >
+          <Heart className="size-6" />
+        </Button>
+      </div>
+
+      {/* Secondary actions */}
+      <div className="flex justify-center mb-3">
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={onCleanData}
+          className="text-neutral-500 hover:text-dislike hover:bg-transparent"
+          title="Reset taste profile"
+        >
+          <RotateCcw className="size-3.5" />
+          Reset taste
+        </Button>
       </div>
 
       {/* Volume */}
       <div className="flex items-center gap-3 px-2">
-        <span className="text-xs text-neutral-500">&#128264;</span>
-        <input
-          type="range"
+        <Volume2 className="size-4 text-neutral-500 shrink-0" />
+        <Slider
+          value={[volume]}
           min={0}
           max={100}
-          value={volume}
-          onChange={(e) => onVolumeChange(Number(e.target.value))}
+          step={1}
+          onValueChange={([val]) => onVolumeChange(val)}
           className="flex-1"
         />
         <span className="text-xs text-neutral-500 w-8 text-right">{volume}%</span>

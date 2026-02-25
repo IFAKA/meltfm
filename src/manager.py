@@ -57,6 +57,10 @@ class Radio:
     def is_first_run(self) -> bool:
         return not self._taste_path.exists()
 
+    def reset_taste(self):
+        """Wipe taste profile completely — fresh start."""
+        self.save_taste(dict(_EMPTY_TASTE))
+
     def add_reaction(self, params: dict, signal: Optional[str]):
         """signal: 'liked' | 'disliked' | 'skipped' | None (neutral)"""
         if signal is None:
