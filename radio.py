@@ -962,70 +962,128 @@ async def main():
         #
         user_input = ""
         first_play = False
+        reaction = None
 
         if not (player.is_playing() or player.is_paused()) and not queued_track:
             console.print("  [dim]First track takes a moment to generate...[/dim]")
 
         if player.is_playing() or player.is_paused():
-            # Auto-advance: reactively wait for track to end, then play next.
-            # No polling — uses asyncio.Event set by Player when afplay exits.
-            async def _auto_advance():
-                nonlocal interrupt_when_ready
-                # If user requested a change, race: track end vs new track ready
-                if interrupt_when_ready and not gen_task.done():
-                    done_waiter = asyncio.create_task(player.wait_done_async())
-                    gen_waiter = asyncio.create_task(asyncio.shield(gen_task))
-                    done_set, pending = await asyncio.wait(
-                        [done_waiter, gen_waiter],
-                        return_when=asyncio.FIRST_COMPLETED,
-                    )
-                    for p in pending:
-                        p.cancel()
-                    # Gen finished first → interrupt playback and start new track
-                    if gen_waiter in done_set:
-                        try:
-                            ok, _ = gen_task.result()
-                        except Exception:
-                            return
-                        if ok and next_path.exists():
-                            interrupt_when_ready = False
-                            player.stop()
-                            dur = get_audio_duration(next_path)
-                            player.play(next_path, duration=dur)
-                            return
-                    # Track ended naturally — fall through to normal loop
+            # ── Inner input loop ──────────────────────────────────────────
+            # Info commands (help, save, what, history, share, open_folder)
+            # re-prompt without restarting the generation pipeline.
+            while True:
+                async def _auto_advance():
+                    nonlocal interrupt_when_ready
+                    if interrupt_when_ready and not gen_task.done():
+                        done_waiter = asyncio.create_task(player.wait_done_async())
+                        gen_waiter = asyncio.create_task(asyncio.shield(gen_task))
+                        done_set, pending = await asyncio.wait(
+                            [done_waiter, gen_waiter],
+                            return_when=asyncio.FIRST_COMPLETED,
+                        )
+                        for p in pending:
+                            p.cancel()
+                        if gen_waiter in done_set:
+                            try:
+                                ok, _ = gen_task.result()
+                            except Exception:
+                                return
+                            if ok and next_path.exists():
+                                interrupt_when_ready = False
+                                player.stop()
+                                dur = get_audio_duration(next_path)
+                                player.play(next_path, duration=dur)
+                                return
 
-                while True:
-                    # Wait for current track to actually finish (reactive, not polling)
-                    await player.wait_done_async()
-                    if player.is_paused():
-                        await asyncio.sleep(0.3)
-                        continue
-                    # Track ended — play next if ready, else loop current
-                    if gen_task.done():
-                        try:
-                            ok, _ = gen_task.result()
-                        except Exception:
-                            break
-                        if ok and next_path.exists():
-                            dur = get_audio_duration(next_path)
-                            player.play(next_path, duration=dur)
+                    while True:
+                        await player.wait_done_async()
+                        if player.is_paused():
+                            await asyncio.sleep(0.3)
                             continue
-                    # Gen not ready yet — loop current track to fill the gap
+                        if gen_task.done():
+                            try:
+                                ok, _ = gen_task.result()
+                            except Exception:
+                                break
+                            if ok and next_path.exists():
+                                dur = get_audio_duration(next_path)
+                                player.play(next_path, duration=dur)
+                                continue
+                        if queued_track and queued_track.exists():
+                            player.replay()
+
+                advance_watcher = asyncio.create_task(_auto_advance())
+                print_status_line(queued_params, player.is_paused(), player._volume)
+                user_input = await get_user_input(
+                    gen_task=gen_task,
+                    gen_start=gen_start,
+                    status_params=queued_params,
+                )
+                advance_watcher.cancel()
+
+                # Empty input while playing — treat as neutral
+                if not user_input:
+                    if player.is_playing():
+                        break
+                    console.print("  [dim]Tell me how you're feeling or what to change...[/dim]")
+                    continue
+
+                # Non-music chatter — re-prompt
+                if friendly_redirect(user_input):
+                    console.print("  [dim]I only speak music — try 'more bass' or 'something darker' :)[/dim]")
+                    continue
+
+                reaction = parse_reaction(user_input)
+                _show_reaction_feedback(reaction)
+
+                # ── Info commands — handle and re-prompt ──────────────────
+                if reaction["command"] == "help":
+                    console.print(_HELP_TEXT)
+                    continue
+
+                if reaction["command"] == "save":
                     if queued_track and queued_track.exists():
-                        player.replay()
+                        dest = radio.mark_favorite(queued_track)
+                        console.print(f"  [green]✓ Saved to favorites:[/green] {dest.name}")
+                        jpath = queued_track.with_suffix(".json")
+                        if jpath.exists():
+                            _update_recipe(jpath, {"reaction": "liked", "favorited": True})
+                        if queued_params:
+                            radio.add_reaction(queued_params, "liked")
+                    else:
+                        console.print("  [dim]No track to save yet.[/dim]")
+                    continue
 
-            advance_watcher = asyncio.create_task(_auto_advance())
+                if reaction["command"] == "what":
+                    if queued_params:
+                        print_recipe(queued_params)
+                    else:
+                        console.print("  [dim]No track info yet.[/dim]")
+                    continue
 
-            # Track is playing or paused — show status line then accept input
-            print_status_line(queued_params, player.is_paused(), player._volume)
-            user_input = await get_user_input(
-                gen_task=gen_task,
-                gen_start=gen_start,
-                status_params=queued_params,
-            )
+                if reaction["command"] == "history":
+                    selected_tags = await navigate_history(radio)
+                    if selected_tags:
+                        console.print(f"  [dim]Direction →[/dim] {selected_tags[:60]}")
+                        last_reaction = selected_tags
+                        break  # user picked direction → regenerate
+                    continue  # escaped → re-prompt
 
-            advance_watcher.cancel()
+                if reaction["command"] == "share":
+                    if queued_params and queued_track:
+                        print_recipe(queued_params)
+                        json_path = queued_track.with_suffix(".json")
+                        if json_path.exists():
+                            console.print(f"  [dim]Recipe file:[/dim] {json_path}")
+                    else:
+                        console.print("  [dim]Nothing to share yet.[/dim]")
+                    continue
+
+                if reaction["command"] == "open_folder":
+                    subprocess.run(["open", str(radio.tracks_dir)], check=False)
+                    continue
+
+                break  # quit, radio cmd, or musical reaction → proceed
 
             # If generation still running after input — show progress (with looping)
             if not gen_task.done():
@@ -1121,22 +1179,10 @@ async def main():
                 console.print("  [dim]Tell me how you're feeling or what to change...[/dim]")
                 user_input = await get_user_input()
 
-        # Friendly redirect for non-music chatter
-        if friendly_redirect(user_input):
-            console.print("  [dim]I only speak music — try 'more bass' or 'something darker' :)[/dim]")
-            _commit_track()
-            queued_track = next_path
-            queued_params = params
-            last_reaction = ""
-            last_params = params
-            recent_params = (recent_params + [params])[-5:]
-            continue
-
-        # ── 9. Parse reaction ─────────────────────────────────────────────────
-        reaction = parse_reaction(user_input)
-
-        # ── Visual feedback — show the user what we understood ────────────────
-        _show_reaction_feedback(reaction)
+        # ── 9. Parse reaction (if not already parsed in inner input loop) ─────
+        if reaction is None:
+            reaction = parse_reaction(user_input)
+            _show_reaction_feedback(reaction)
 
         # ── 10. Handle commands ───────────────────────────────────────────────
 
@@ -1158,45 +1204,19 @@ async def main():
                 # Discard the pre-generated track (wrong radio params)
             continue
 
-        if reaction["command"] == "help":
-            console.print(_HELP_TEXT)
-            continue
-
-        if reaction["command"] == "save":
-            if queued_track and queued_track.exists():
-                dest = radio.mark_favorite(queued_track)
-                console.print(f"  [green]✓ Saved to favorites:[/green] {dest.name}")
-                # Mark recipe as favorite
-                jpath = queued_track.with_suffix(".json")
-                if jpath.exists():
-                    _update_recipe(jpath, {"reaction": "liked", "favorited": True})
-            else:
-                console.print("  [dim]No track to save yet.[/dim]")
-
-        if reaction["command"] == "what":
-            if queued_params:
-                print_recipe(queued_params)
-            else:
-                console.print("  [dim]No track info yet.[/dim]")
-
+        # History direction selected from inner loop — discard pre-gen, regenerate
         if reaction["command"] == "history":
-            selected_tags = await navigate_history(radio)
-            if selected_tags:
-                console.print(f"  [dim]Direction →[/dim] {selected_tags[:60]}")
-                last_reaction = selected_tags
+            if not gen_task.done():
+                gen_task.cancel()
+                try:
+                    await gen_task
+                except (asyncio.CancelledError, Exception):
+                    pass
+            if next_path.exists():
+                next_path.unlink()
+            last_params = queued_params or last_params
+            recent_params = (recent_params + [queued_params or params])[-5:]
             continue
-
-        if reaction["command"] == "share":
-            if queued_params and queued_track:
-                print_recipe(queued_params)
-                json_path = queued_track.with_suffix(".json")
-                if json_path.exists():
-                    console.print(f"  [dim]Recipe file:[/dim] {json_path}")
-            else:
-                console.print("  [dim]Nothing to share yet.[/dim]")
-
-        if reaction["command"] == "open_folder":
-            subprocess.run(["open", str(radio.tracks_dir)], check=False)
 
         if reaction["signal"] == "skipped":
             player.stop()
@@ -1229,8 +1249,8 @@ async def main():
         # that didn't resolve to a pure signal/command), throw N+1 away and let
         # the next iteration generate fresh with the right params.
         #
-        # Pure sentiment ("love it", "save", "skip") and commands ("history",
-        # "what") carry no musical change, so N+1 is still relevant — keep it.
+        # Pure sentiment ("love it", "save", "skip") carry no musical change,
+        # so N+1 is still relevant — keep it.
 
         wants_change = bool(
             reaction["modifiers"] or
@@ -1263,9 +1283,6 @@ async def main():
             _commit_track()
             queued_track = next_path
             queued_params = params
-            # Only update last_reaction when there is actual musical content.
-            # Pure info commands (history, what, share, open_folder) have no signal
-            # and should leave last_reaction unchanged so LLM context is preserved.
             has_music = bool(reaction["signal"] or reaction["modifiers"] or reaction["mood"] or reaction["direction"])
             if has_music:
                 if reaction["signal"] and not reaction["modifiers"] and not reaction["mood"] and reaction["direction"] != "reset":
@@ -1277,7 +1294,6 @@ async def main():
                     last_reaction = _signal_hints.get(reaction["signal"], user_input)
                 else:
                     last_reaction = user_input
-            # else: last_reaction keeps its previous value — no musical direction was given
             last_params = params
             recent_params = (recent_params + [params])[-5:]
 
