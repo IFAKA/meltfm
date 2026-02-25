@@ -78,7 +78,7 @@ ok "python3.12 at $(command -v python3.12)"
 
 # ─── 4. Install project deps ──────────────────────────────────────────────────
 echo ""
-echo -e "${BOLD}[4/7] Setting up project...${RESET}"
+echo -e "${BOLD}[4/8] Setting up project...${RESET}"
 
 mkdir -p "$SCRIPT_DIR/radios/default/tracks"
 mkdir -p "$SCRIPT_DIR/radios/default/favorites"
@@ -95,9 +95,30 @@ cd "$SCRIPT_DIR"
 uv sync
 ok "Python deps installed in .venv/"
 
-# ─── 5. Shell alias ───────────────────────────────────────────────────────────
+# ─── 5. Node.js + frontend build ────────────────────────────────────────────
 echo ""
-echo -e "${BOLD}[5/7] Installing shell alias...${RESET}"
+echo -e "${BOLD}[5/8] Building frontend...${RESET}"
+
+if ! command -v node &>/dev/null; then
+    warn "Node.js not found — installing via Homebrew..."
+    brew install node
+fi
+
+NODE_VERSION=$(node --version 2>/dev/null)
+ok "Node.js $NODE_VERSION"
+
+cd "$SCRIPT_DIR/web"
+npm install --silent
+ok "Frontend deps installed"
+
+npm run build --silent
+ok "Frontend built (web/dist/)"
+
+cd "$SCRIPT_DIR"
+
+# ─── 6. Shell alias ───────────────────────────────────────────────────────────
+echo ""
+echo -e "${BOLD}[6/8] Installing shell alias...${RESET}"
 
 if grep -qF "# meltfm" "$ZSHRC" 2>/dev/null; then
     ok "alias 'radio' already in $ZSHRC"
@@ -110,7 +131,7 @@ fi
 
 # ─── 6. Ollama setup ──────────────────────────────────────────────────────────
 echo ""
-echo -e "${BOLD}[6/7] Setting up Ollama...${RESET}"
+echo -e "${BOLD}[7/8] Setting up Ollama...${RESET}"
 
 if ! command -v ollama &>/dev/null; then
     warn "Ollama not found — installing via Homebrew..."
@@ -144,7 +165,7 @@ ok "$OLLAMA_MODEL model ready"
 
 # ─── 7. ACE-Step setup ────────────────────────────────────────────────────────
 echo ""
-echo -e "${BOLD}[7/7] Setting up ACE-Step...${RESET}"
+echo -e "${BOLD}[8/8] Setting up ACE-Step...${RESET}"
 
 if [[ ! -d "$ACESTEP_DIR" ]]; then
     warn "ACE-Step not found — cloning..."
