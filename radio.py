@@ -129,6 +129,18 @@ async def main():
             if enrich_parts:
                 llm_message += f" [{'; '.join(enrich_parts)}]"
 
+        # Loop the current track during the LLM call to avoid silence gaps
+        async def _loop_during_llm():
+            while True:
+                await player.wait_done_async()
+                if player.is_playing() or player.is_paused():
+                    continue
+                if player.current_track:
+                    player.replay()
+                else:
+                    break
+
+        llm_looper = asyncio.create_task(_loop_during_llm()) if player.is_playing() else None
         try:
             with console.status("  [yellow]✦  Thinking...[/yellow]", spinner="dots"):
                 params = await generate_params(
@@ -141,6 +153,9 @@ async def main():
             console.print(f"\n[red]{format_error('llm_generate', last_reaction, last_params, str(e))}[/red]")
             await asyncio.sleep(2)
             continue
+        finally:
+            if llm_looper and not llm_looper.done():
+                llm_looper.cancel()
 
         track_id = radio.next_track_id()
         params["id"] = track_id
@@ -334,10 +349,88 @@ async def main():
                         console.print("  [dim]No sleep timer active. Try: sleep 30[/dim]")
                     continue
 
+                # ── Pure signal (liked/disliked) — handle in-loop ────
+                if (
+                    reaction["signal"] in ("liked", "disliked")
+                    and not reaction["modifiers"]
+                    and not reaction["mood"]
+                    and reaction["direction"] != "reset"
+                    and not reaction["command"]
+                ):
+                    # Record the reaction on the track the user is hearing
+                    if queued_params:
+                        radio.add_reaction(queued_params, reaction["signal"])
+                        if queued_track:
+                            jpath = queued_track.with_suffix(".json")
+                            if jpath.exists():
+                                update_recipe(jpath, {"reaction": reaction["signal"]})
+                    if reaction["signal"] == "liked":
+                        # Positive → keep playing, don't regenerate
+                        continue
+                    # Negative (disliked) → break to regenerate
+                    # fall through to break
+
                 break  # quit, radio cmd, or musical reaction → proceed
 
-            # If generation still running after input — show progress (with looping)
+            # ── Early cancel: if user wants changes, don't wait for old gen ──
+            early_wants_change = reaction is not None and bool(
+                reaction.get("modifiers")
+                or reaction.get("mood")
+                or reaction.get("direction") == "reset"
+                or reaction.get("signal") == "disliked"
+                or (not reaction.get("command") and not reaction.get("signal") and user_input)
+            )
+
+            if early_wants_change and not auto_advanced:
+                # Cancel the pre-generated track immediately — we won't use it
+                if not gen_task.done():
+                    gen_task.cancel()
+                    try:
+                        await gen_task
+                    except (asyncio.CancelledError, Exception):
+                        pass
+                if next_path.exists():
+                    next_path.unlink()
+
+                # ── Update taste + regenerate immediately ─────────────
+                if reaction.get("signal") and queued_params:
+                    radio.add_reaction(queued_params, reaction["signal"])
+                    if queued_track:
+                        jpath = queued_track.with_suffix(".json")
+                        if jpath.exists():
+                            update_recipe(jpath, {"reaction": reaction["signal"]})
+
+                if reaction.get("modifiers"):
+                    for mod in reaction["modifiers"]:
+                        radio.add_note(mod)
+                if reaction.get("mood"):
+                    radio.set_direction(f"mood: {reaction['mood']}")
+                if reaction.get("direction") == "reset":
+                    radio.set_direction("reset — bold departure from recent tracks")
+
+                if reaction.get("signal") == "skipped":
+                    player.stop()
+                    console.print("  [yellow]Skipped.[/yellow]")
+
+                interrupt_when_ready = reaction.get("signal") != "skipped"
+
+                if reaction.get("signal") == "disliked":
+                    last_reaction = "Shift direction noticeably — change genre or energy. " + (user_input or "")
+                else:
+                    last_reaction = user_input
+
+                console.print("  [dim]↻ Got it — regenerating with your changes...[/dim]")
+                last_params = queued_params or last_params
+                recent_params = (recent_params + [queued_params or params])[-5:]
+                continue
+
+            elif early_wants_change and auto_advanced:
+                # Auto-advance already played the pre-gen track — commit it,
+                # record taste, and regenerate on the next iteration.
+                pass  # fall through to normal recipe/commit flow below
+
             if not gen_task.done():
+                # Normal flow: wait for generation to complete (with looping)
                 success, err = await show_generation_progress(
                     gen_task, "  ◈  Finishing track", loop_player=player, gen_params=params,
                 )
@@ -524,23 +617,10 @@ async def main():
         )
 
         if wants_change:
-            # Only cancel/delete the pre-generated track if auto_advance hasn't
-            # already started playing it (otherwise we'd delete the playing file).
-            if not auto_advanced:
-                if not gen_task.done():
-                    gen_task.cancel()
-                    try:
-                        await gen_task
-                    except (asyncio.CancelledError, Exception):
-                        pass
-                if next_path.exists():
-                    next_path.unlink()
-                interrupt_when_ready = True
-            else:
-                # Auto-advance already played next_path — let it keep playing.
-                # The next iteration will generate a fresh track with the changes.
-                interrupt_when_ready = False
+            # Auto-advance already played next_path — commit it and regenerate.
+            if auto_advanced:
                 _commit_track()
+            interrupt_when_ready = not auto_advanced
 
             console.print("  [dim]↻ Got it — regenerating with your changes...[/dim]")
             last_reaction = user_input
