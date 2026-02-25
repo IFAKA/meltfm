@@ -62,8 +62,9 @@ class Radio:
         self.save_taste(dict(_EMPTY_TASTE))
 
     def full_reset(self):
-        """Wipe taste profile + all tracks + favorites."""
-        self.reset_taste()
+        """Wipe taste profile + all tracks + favorites. Returns radio to first-run state."""
+        if self._taste_path.exists():
+            self._taste_path.unlink()
         shutil.rmtree(self.tracks_dir, ignore_errors=True)
         shutil.rmtree(self.favorites_dir, ignore_errors=True)
         self._ensure_dirs()

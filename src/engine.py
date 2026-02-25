@@ -205,6 +205,13 @@ class RadioEngine:
             self.radio.full_reset()
             self._queued_track = None
             self._queued_params = None
+            self._last_params = None
+            self._recent_params = []
+            self._last_reaction = ""
+            self._pending_modifiers.clear()
+            self._pending_reaction = None
+            await self.state.broadcast("first_run", {"radio": self.radio.name})
+            self._reaction_event.clear()
 
     async def set_first_vibe(self, text: str):
         """Set initial direction for a new radio (first-run flow)."""
