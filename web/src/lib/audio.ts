@@ -18,6 +18,7 @@ export class AudioManager {
   private callbacks: AudioCallbacks;
   private _volume = 0.8;
   private wakeLock: WakeLockSentinel | null = null;
+  private _suppressNextPause = false;
 
   constructor(callbacks: AudioCallbacks = {}) {
     this.audio = new Audio();
@@ -31,7 +32,10 @@ export class AudioManager {
       this.callbacks.onTimeUpdate?.(el.currentTime, el.duration || 0);
     });
     el.addEventListener("play", () => this.callbacks.onPlayStateChange?.(true));
-    el.addEventListener("pause", () => this.callbacks.onPlayStateChange?.(false));
+    el.addEventListener("pause", () => {
+      if (this._suppressNextPause) { this._suppressNextPause = false; return; }
+      this.callbacks.onPlayStateChange?.(false);
+    });
     el.addEventListener("ended", () => {
       el.currentTime = 0;
       el.play().catch(() => {});
@@ -78,6 +82,7 @@ export class AudioManager {
       await new Promise((r) => setTimeout(r, interval));
     }
 
+    this._suppressNextPause = true;
     this.audio.pause();
     this.audio.removeAttribute("src");
     this.audio = next;

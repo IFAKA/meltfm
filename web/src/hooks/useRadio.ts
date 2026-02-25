@@ -150,7 +150,7 @@ export function useRadio() {
             break;
 
           case "regenerating":
-            setState((s) => ({ ...s, generating: true, generationElapsed: 0 }));
+            setState((s) => ({ ...s, generating: true, generationElapsed: 0, generationParams: null }));
             showToast("Got it — regenerating...");
             break;
 
