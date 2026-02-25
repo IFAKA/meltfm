@@ -1,143 +1,57 @@
-"""Module 7b — Startup Preflight Check"""
+"""Startup health checks — used by /api/health and engine startup."""
 import asyncio
+import logging
 import subprocess
-import sys
+import os
 from pathlib import Path
 
 import httpx
-from rich.console import Console
-from rich.table import Table
-from rich import print as rprint
 
-from .config import OLLAMA_HOST, OLLAMA_MODEL, ACESTEP_HOST, APP_VERSION
+from .config import OLLAMA_HOST, OLLAMA_MODEL, ACESTEP_HOST
 
-console = Console()
+logger = logging.getLogger(__name__)
 
 
-async def run_preflight() -> bool:
-    """
-    Run all startup checks. Print results. Return True only if ALL pass.
-    """
-    console.print(f"\n  [bold]♪  Personal Radio v{APP_VERSION}[/bold] — preflight check\n")
-
-    checks = [
-        ("Python deps", _check_python_deps),
-        ("Ollama daemon", _check_ollama_daemon),
-        ("LLM model", _check_ollama_model),
-        ("ACE-Step server", _check_acestep),
-    ]
-
-    results = []
-    for i, (label, fn) in enumerate(checks, 1):
-        ok, msg, fix = await fn()
-        results.append((ok, label, msg, fix))
-        icon = "[green]✓[/green]" if ok else "[red]✗[/red]"
-        dot_count = 30 - len(label)
-        dots = "." * max(dot_count, 3)
-        status = f"[green]{msg}[/green]" if ok else f"[red]{msg}[/red]"
-        console.print(f"  [{i}/{len(checks)}] {label} {dots} {icon} {status}")
-
-    # Print fix instructions for any failures
-    failures = [(label, fix) for ok, label, _, fix in results if not ok and fix]
-    if failures:
-        console.print("")
-        for label, fix in failures:
-            console.print(f"  [yellow]Fix for {label}:[/yellow]")
-            for line in fix.strip().splitlines():
-                console.print(f"    {line}")
-            console.print("")
-        console.print("  Then re-run: [bold]uv run python radio.py[/bold]\n")
-        return False
-
-    console.print("")
-    return True
-
-
-async def _check_python_deps() -> tuple[bool, str, str]:
-    missing = []
-    versions = []
-    try:
-        import httpx as hx
-        versions.append(f"httpx {hx.__version__}")
-    except ImportError:
-        missing.append("httpx")
-
-    try:
-        import rich
-        v = getattr(rich, "__version__", "ok")
-        versions.append(f"rich {v}")
-    except ImportError:
-        missing.append("rich")
-
-    try:
-        import dotenv
-        versions.append("python-dotenv")
-    except ImportError:
-        missing.append("python-dotenv")
-
-    if missing:
-        return False, f"missing: {', '.join(missing)}", "Run: uv sync"
-    return True, ", ".join(versions), ""
-
-
-async def _check_ollama_daemon() -> tuple[bool, str, str]:
-    try:
-        async with httpx.AsyncClient(timeout=5) as client:
-            r = await client.get(f"{OLLAMA_HOST}/api/tags")
-            if r.status_code == 200:
-                return True, f"running at {OLLAMA_HOST.replace('http://', '')}", ""
-    except Exception:
-        pass
-    fix = (
-        "Ollama is not running. Start it with:\n"
-        "  ollama serve\n"
-        "Or if installed via Homebrew:\n"
-        "  brew services start ollama"
-    )
-    return False, "not responding", fix
-
-
-async def _check_ollama_model() -> tuple[bool, str, str]:
+async def check_ollama() -> dict:
+    """Check if Ollama is running and has the required model."""
     try:
         async with httpx.AsyncClient(timeout=5) as client:
             r = await client.get(f"{OLLAMA_HOST}/api/tags")
             if r.status_code == 200:
                 models = [m["name"] for m in r.json().get("models", [])]
-                # Check for exact or prefix match (e.g. "llama3.2:3b" matches "llama3.2:3b")
-                if any(m == OLLAMA_MODEL or m.startswith(OLLAMA_MODEL.split(":")[0]) for m in models):
-                    return True, f"{OLLAMA_MODEL} available", ""
-                return False, f"{OLLAMA_MODEL} not found", f"Pull it: ollama pull {OLLAMA_MODEL}"
-    except Exception:
+                has_model = any(
+                    m == OLLAMA_MODEL or m.startswith(OLLAMA_MODEL.split(":")[0])
+                    for m in models
+                )
+                return {
+                    "ok": True,
+                    "model": OLLAMA_MODEL,
+                    "model_available": has_model,
+                }
+    except Exception as e:
         pass
-    return False, "can't check (Ollama not running)", ""
+    return {"ok": False, "error": "Ollama not responding"}
 
 
-async def _check_acestep() -> tuple[bool, str, str]:
-    # Already running?
+async def check_acestep() -> dict:
+    """Check if ACE-Step server is running."""
     try:
         async with httpx.AsyncClient(timeout=5) as client:
             r = await client.get(f"{ACESTEP_HOST}/health")
             if r.status_code == 200:
-                return True, f"running at {ACESTEP_HOST.replace('http://', '')}", ""
+                return {"ok": True}
     except Exception:
         pass
+    return {"ok": False, "error": "ACE-Step not responding"}
 
-    # Try to auto-start it
+
+async def try_start_acestep() -> bool:
+    """Attempt to auto-start ACE-Step. Returns True if it starts successfully."""
     acestep_dir = Path.home() / "ACE-Step"
-    start_script = acestep_dir / "start_api_server_macos.sh"
+    if not acestep_dir.exists():
+        return False
 
-    if not start_script.exists():
-        return False, "not installed", (
-            "ACE-Step not found. Run ./setup.sh to install it."
-        )
-
-    console.print("  [yellow]→[/yellow] ACE-Step not running — starting it... [dim](Ctrl+C to cancel)[/dim]")
-
-    import tempfile, os
-    log_file = Path(tempfile.gettempdir()) / "acestep_start.log"
-    log_f = open(log_file, "w")
-
-    # Find uv — search common locations + broad find as fallback
+    # Find uv
     uv_path = None
     for candidate in [
         Path.home() / ".local/bin/uv",
@@ -148,27 +62,11 @@ async def _check_acestep() -> tuple[bool, str, str]:
         if candidate.exists():
             uv_path = str(candidate)
             break
-    if not uv_path:
-        try:
-            result = subprocess.run(
-                ["find", str(Path.home()), "-name", "uv", "-type", "f", "-perm", "+111"],
-                capture_output=True, text=True, timeout=5
-            )
-            for line in result.stdout.splitlines():
-                if "__pycache__" not in line and line.strip():
-                    uv_path = line.strip()
-                    break
-        except Exception:
-            pass
 
     if not uv_path:
-        log_f.close()
-        return False, "uv not found", (
-            "Install uv: curl -LsSf https://astral.sh/uv/install.sh | sh\n"
-            "Then re-run: uv run python radio.py"
-        )
+        return False
 
-    # Bypass the interactive start script — run acestep-api directly
+    logger.info("Auto-starting ACE-Step...")
     env = os.environ.copy()
     env["ACESTEP_LM_BACKEND"] = "mlx"
     env["TOKENIZERS_PARALLELISM"] = "false"
@@ -176,38 +74,37 @@ async def _check_acestep() -> tuple[bool, str, str]:
         [uv_path, "run", "acestep-api", "--host", "127.0.0.1", "--port", "8001"],
         cwd=str(acestep_dir),
         env=env,
-        stdout=log_f,
-        stderr=subprocess.STDOUT,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
     )
 
-    # Wait up to 180s — covers cold start when models are already downloaded
-    last_shown = ""
+    # Wait up to 180s
     for elapsed in range(180):
         await asyncio.sleep(1)
         try:
             async with httpx.AsyncClient(timeout=2) as client:
                 r = await client.get(f"{ACESTEP_HOST}/health")
                 if r.status_code == 200:
-                    log_f.close()
-                    return True, f"auto-started at {ACESTEP_HOST.replace('http://', '')}", ""
+                    logger.info("ACE-Step auto-started after %ds", elapsed)
+                    return True
         except Exception:
             pass
 
-        # Show latest line from log
-        try:
-            lines = log_file.read_text().splitlines()
-            last = next((l.strip() for l in reversed(lines) if l.strip()), "")
-            if last and last != last_shown:
-                last_shown = last
-                console.print(f"  [dim]  [{elapsed}s] {last[:80]}[/dim]")
-        except Exception:
-            pass
+    return False
 
-    log_f.close()
-    return False, "not ready after 3 min", (
-        "First time running? You need to download the model weights first (~20-40 GB).\n"
-        "Open a separate terminal and run:\n"
-        "  cd ~/ACE-Step && ./start_api_server_macos.sh\n"
-        "Wait for: 'API will be available at: http://127.0.0.1:8001' (takes 30-60 min)\n"
-        "Then re-run: radio"
-    )
+
+async def run_preflight() -> dict:
+    """Run all startup checks. Returns dict of check results."""
+    ollama = await check_ollama()
+    acestep = await check_acestep()
+
+    if not acestep["ok"]:
+        started = await try_start_acestep()
+        if started:
+            acestep = {"ok": True, "auto_started": True}
+
+    return {
+        "ollama": ollama,
+        "acestep": acestep,
+        "all_ok": ollama["ok"] and acestep["ok"],
+    }

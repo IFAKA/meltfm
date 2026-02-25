@@ -1,17 +1,19 @@
-"""Module 7 — AI-Pasteable Error Block"""
+"""Structured error logging — JSON to errors.log, no terminal formatting."""
 import json
+import logging
 import sys
 from datetime import datetime
-from pathlib import Path
 from typing import Optional
 
 from .config import ERRORS_LOG, OUTPUT_DIR, DEV_MODE
 
+logger = logging.getLogger(__name__)
+
 _FRIENDLY_MESSAGES = {
-    "track_generation": "Oops, that track failed — trying again...",
-    "llm_generate": "Couldn't come up with params — retrying...",
+    "track_generation": "Track generation failed — retrying...",
+    "llm_generate": "Couldn't generate params — retrying...",
     "disk_check": "Running low on disk space.",
-    "preflight": "Startup check failed — see above for details.",
+    "preflight": "Startup check failed.",
 }
 
 
@@ -21,33 +23,27 @@ def format_error(
     params: Optional[dict] = None,
     raw: str = "",
 ) -> str:
-    params_str = json.dumps(params, indent=2) if params else "N/A"
-    py_version = sys.version.replace("\n", " ")
-    block = f"""
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
- ERROR  stage: {stage}
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
- System:   macOS · M4 Pro · Python {py_version}
- Stage:    {stage}
- Input:    "{user_msg}"
- Params:   {params_str}
- Error:    {raw}
- Fix ask:  The meltfm radio crashed at "{stage}".
-           Reproduce with: uv run python radio.py
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-""".strip()
+    entry = {
+        "timestamp": datetime.now().isoformat(),
+        "stage": stage,
+        "input": user_msg,
+        "params": params,
+        "error": raw,
+        "python": sys.version.split()[0],
+    }
 
-    _append_to_log(block)
+    _append_to_log(entry)
+    logger.error("Error at %s: %s", stage, raw)
 
     if DEV_MODE:
-        return block
-    return _FRIENDLY_MESSAGES.get(stage, f"Something went wrong ({stage}). Check errors.log for details.")
+        return json.dumps(entry, indent=2)
+    return _FRIENDLY_MESSAGES.get(stage, f"Something went wrong ({stage}).")
 
 
-def _append_to_log(block: str):
+def _append_to_log(entry: dict):
     try:
         OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
         with open(ERRORS_LOG, "a") as f:
-            f.write(f"\n[{datetime.now().isoformat()}]\n{block}\n")
+            f.write(json.dumps(entry) + "\n")
     except OSError:
-        pass  # Don't crash the error handler
+        pass

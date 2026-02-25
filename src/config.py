@@ -62,7 +62,10 @@ MAX_LIKED_HISTORY = 20
 MAX_DISLIKED_HISTORY = 20
 MAX_SKIPPED_HISTORY = 10
 
-APP_VERSION = "0.1.0"
+APP_VERSION = "0.2.0"
+
+# ─── Web server ──────────────────────────────────────────────────────────────
+WEB_PORT = int(os.getenv("WEB_PORT", "8888"))
 
 # ─── Dev mode ─────────────────────────────────────────────────────────────────
 DEV_MODE = os.getenv("DEV_MODE", "1").strip() in ("1", "true", "yes")
