@@ -22,6 +22,17 @@ def fmt_time(seconds: float) -> str:
     return f"{m}:{s:02d}"
 
 
+def fmt_countdown(deadline: float) -> str:
+    """Format remaining time until deadline as mm:ss or h:mm:ss."""
+    remaining = max(0, deadline - time.monotonic())
+    total_s = int(remaining)
+    h, rem = divmod(total_s, 3600)
+    m, s = divmod(rem, 60)
+    if h > 0:
+        return f"{h}:{m:02d}:{s:02d}"
+    return f"{m}:{s:02d}"
+
+
 def print_header():
     console.print(
         f"\n  [bold cyan]♪  Personal Radio[/bold cyan]"
@@ -55,7 +66,7 @@ def print_now_playing(params: dict, track_path: Optional[Path] = None):
     console.print("     " + "─" * 52)
 
 
-def print_status_line(params: Optional[dict], player, is_paused: bool, volume: int):
+def print_status_line(params: Optional[dict], player, is_paused: bool, volume: int, sleep_deadline: Optional[float] = None):
     """Persistent one-liner shown above every prompt so state is always visible."""
     if not params:
         return
@@ -74,12 +85,16 @@ def print_status_line(params: Optional[dict], player, is_paused: bool, volume: i
     else:
         progress = ""
 
+    sleep_tag = ""
+    if sleep_deadline is not None:
+        sleep_tag = f"  ·  [yellow]⏾ Sleep {fmt_countdown(sleep_deadline)}[/yellow]"
+
     if is_paused:
         icon = "[yellow]⏸[/yellow]"
     else:
         icon = "[green]♫[/green]"
     console.print(
-        f"\n  {icon}{progress}  [dim]{name}  ·  {bpm} BPM  ·  {key}  ·  Vol: {volume}%[/dim]"
+        f"\n  {icon}{progress}  [dim]{name}  ·  {bpm} BPM  ·  {key}  ·  Vol: {volume}%[/dim]{sleep_tag}"
     )
 
 
@@ -165,6 +180,9 @@ def show_reaction_feedback(reaction: dict):
             "delete_radio": "[red]✗ deleting radio[/red]",
             "list_radios": "[blue]◈ listing radios[/blue]",
             "help": "[blue]◈ help[/blue]",
+            "sleep_timer": "[yellow]⏾ sleep timer set[/yellow]",
+            "cancel_sleep": "[yellow]⏾ sleep timer off[/yellow]",
+            "sleep_status": "[yellow]⏾ sleep status[/yellow]",
         }
         parts.append(cmd_labels.get(command, f"[dim]{command}[/dim]"))
 

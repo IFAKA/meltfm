@@ -28,6 +28,7 @@ from src.ui import (
     show_reaction_feedback,
     friendly_redirect,
     show_generation_progress,
+    fmt_countdown,
     console,
 )
 from src.input import get_user_input, _read_one_char
@@ -45,6 +46,7 @@ manager = RadioManager()
 _HELP_TEXT = (
     "\n  [dim]Try: love it · skip · more bass · something different"
     " · save this · what is this · tracks · radios · switch to <name> · help · quit[/dim]"
+    "\n  [dim]Sleep timer: sleep 30 · sleep 1h · sleep off · sleep[/dim]"
     "\n  [dim]Shortcuts: Space = pause/resume · ↑↓ = volume · ←→ = seek ±5s[/dim]\n"
 )
 
@@ -94,9 +96,16 @@ async def main():
     queued_params: Optional[dict] = None
     recent_params: list[dict] = []
     interrupt_when_ready = False
+    sleep_deadline: float | None = None
 
     # ── Main loop ─────────────────────────────────────────────────────────────
     while True:
+
+        # ── Check sleep timer ──────────────────────────────────────────
+        if sleep_deadline is not None and time.monotonic() >= sleep_deadline:
+            console.print("\n  [yellow]⏾  Sleep timer expired — stopping after this track.[/yellow]")
+            sleep_deadline = None
+            break
 
         # ── Wait while paused ─────────────────────────────────────────────
         if player.is_paused():
@@ -207,12 +216,13 @@ async def main():
                             player.replay()
 
                 advance_watcher = asyncio.create_task(_auto_advance())
-                print_status_line(queued_params, player, player.is_paused(), player._volume)
+                print_status_line(queued_params, player, player.is_paused(), player._volume, sleep_deadline=sleep_deadline)
                 user_input = await get_user_input(
                     player=player,
                     gen_task=gen_task,
                     gen_start=gen_start,
                     status_params=queued_params,
+                    sleep_deadline=sleep_deadline,
                 )
                 advance_watcher.cancel()
 
@@ -274,6 +284,27 @@ async def main():
 
                 if reaction["command"] == "open_folder":
                     subprocess.run(["open", str(radio.tracks_dir)], check=False)
+                    continue
+
+                if reaction["command"] == "sleep_timer":
+                    mins = reaction.get("timer_minutes", 30)
+                    sleep_deadline = time.monotonic() + mins * 60
+                    console.print(f"  [yellow]⏾  Sleep timer set — stopping in {mins} min[/yellow]")
+                    continue
+
+                if reaction["command"] == "cancel_sleep":
+                    if sleep_deadline is not None:
+                        sleep_deadline = None
+                        console.print("  [yellow]⏾  Sleep timer cancelled[/yellow]")
+                    else:
+                        console.print("  [dim]No sleep timer active.[/dim]")
+                    continue
+
+                if reaction["command"] == "sleep_status":
+                    if sleep_deadline is not None:
+                        console.print(f"  [yellow]⏾  Sleep in {fmt_countdown(sleep_deadline)}[/yellow]")
+                    else:
+                        console.print("  [dim]No sleep timer active. Try: sleep 30[/dim]")
                     continue
 
                 break  # quit, radio cmd, or musical reaction → proceed
@@ -372,6 +403,27 @@ async def main():
             console.print("\n  [bold]Saving taste profile...[/bold] [green]Done.[/green]")
             player.stop()
             break
+
+        if reaction["command"] == "sleep_timer":
+            mins = reaction.get("timer_minutes", 30)
+            sleep_deadline = time.monotonic() + mins * 60
+            console.print(f"  [yellow]⏾  Sleep timer set — stopping in {mins} min[/yellow]")
+            continue
+
+        if reaction["command"] == "cancel_sleep":
+            if sleep_deadline is not None:
+                sleep_deadline = None
+                console.print("  [yellow]⏾  Sleep timer cancelled[/yellow]")
+            else:
+                console.print("  [dim]No sleep timer active.[/dim]")
+            continue
+
+        if reaction["command"] == "sleep_status":
+            if sleep_deadline is not None:
+                console.print(f"  [yellow]⏾  Sleep in {fmt_countdown(sleep_deadline)}[/yellow]")
+            else:
+                console.print("  [dim]No sleep timer active. Try: sleep 30[/dim]")
+            continue
 
         if reaction["command"] in ("switch_radio", "create_radio", "delete_radio", "list_radios"):
             new_radio = await handle_radio_command(reaction, radio, manager)

@@ -7,7 +7,7 @@ import time
 import tty
 from typing import Optional
 
-from .ui import fmt_time
+from .ui import fmt_time, fmt_countdown
 
 
 def _read_one_char() -> str:
@@ -53,6 +53,7 @@ async def get_user_input(
     gen_task: Optional[asyncio.Task] = None,
     gen_start: Optional[float] = None,
     status_params: Optional[dict] = None,
+    sleep_deadline: Optional[float] = None,
 ) -> str:
     """Read input with cursor navigation, live generation progress, and in-place updates.
 
@@ -122,9 +123,13 @@ async def get_user_input(
         else:
             progress = ""
 
+        sleep_tag = ""
+        if sleep_deadline is not None:
+            sleep_tag = f"  ·  \033[33m⏾ Sleep {fmt_countdown(sleep_deadline)}\033[0m"
+
         line = (
             f"  {icon_col}{icon}\033[0m{progress}  \033[2m{name}"
-            f"  ·  {bpm} BPM  ·  {key}  ·  Vol: {volume}%\033[0m"
+            f"  ·  {bpm} BPM  ·  {key}  ·  Vol: {volume}%\033[0m{sleep_tag}"
         )
         n = 2 if has_hint else 1
         sys.stdout.write(f"\033[{n}A\r{line}\033[K\033[{n}B\r  ❯ {buf[0]}")

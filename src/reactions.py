@@ -96,6 +96,31 @@ def parse_reaction(text: str) -> dict:
     if re.search(r"^\s*help\s*$", t):
         result["command"] = "help"
 
+    # ── Sleep timer ────────────────────────────────────────────────────────
+    if re.search(r"cancel\s+sleep", t):
+        result["command"] = "cancel_sleep"
+        return result
+
+    sleep_match = re.match(r"^\s*sleep\s+off\s*$", t)
+    if sleep_match:
+        result["command"] = "cancel_sleep"
+        return result
+
+    sleep_dur = re.match(r"^\s*sleep\s+(\d+)\s*(h|m|min|mins|hours?)?\s*$", t)
+    if sleep_dur:
+        amount = int(sleep_dur.group(1))
+        unit = (sleep_dur.group(2) or "m").lower()
+        if unit.startswith("h"):
+            result["timer_minutes"] = amount * 60
+        else:
+            result["timer_minutes"] = amount
+        result["command"] = "sleep_timer"
+        return result
+
+    if re.match(r"^\s*sleep\s*$", t):
+        result["command"] = "sleep_status"
+        return result
+
     # ── Signal ────────────────────────────────────────────────────────────────
 
     if re.search(
