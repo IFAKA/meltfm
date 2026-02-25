@@ -111,7 +111,7 @@ def print_status_line(params: Optional[dict], is_paused: bool, volume: int):
 
     if is_paused:
         icon = "[yellow]⏸[/yellow]"
-        state = "  [yellow dim][PAUSED][/yellow dim]"
+        state = ""
     else:
         icon = "[green]♫[/green]"
         state = ""
@@ -511,7 +511,7 @@ async def get_user_input(
         is_p = player.is_paused()
         icon_col = "\033[33m" if is_p else "\033[32m"
         icon = "⏸" if is_p else "♫"
-        pause_str = "  \033[33;2m[PAUSED]\033[0m" if is_p else ""
+        pause_str = ""
 
         el = player.elapsed
         dur = player.duration
