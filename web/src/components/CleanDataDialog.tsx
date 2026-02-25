@@ -39,14 +39,14 @@ export default function CleanDataDialog({ open, onClose, onConfirm, radioName }:
     return () => window.removeEventListener("resize", check);
   }, []);
 
-  const description = `This will clear all liked, disliked, and skipped history for "${radioName}". The radio will start learning your taste from scratch.`;
+  const description = `This will delete all tracks, favorites, and taste history for "${radioName}". The radio will start completely fresh.`;
 
   if (isMobile) {
     return (
       <Sheet open={open} onOpenChange={(v) => !v && onClose()}>
         <SheetContent side="bottom" className="bg-surface-2 border-neutral-700">
           <SheetHeader>
-            <SheetTitle>Clean taste data?</SheetTitle>
+            <SheetTitle>Clear all data?</SheetTitle>
             <SheetDescription>{description}</SheetDescription>
           </SheetHeader>
           <SheetFooter className="mt-6 flex-row gap-3">
@@ -70,7 +70,7 @@ export default function CleanDataDialog({ open, onClose, onConfirm, radioName }:
     <AlertDialog open={open} onOpenChange={(v) => !v && onClose()}>
       <AlertDialogContent className="bg-surface-2 border-neutral-700">
         <AlertDialogHeader>
-          <AlertDialogTitle>Clean taste data?</AlertDialogTitle>
+          <AlertDialogTitle>Clear all data?</AlertDialogTitle>
           <AlertDialogDescription>{description}</AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>

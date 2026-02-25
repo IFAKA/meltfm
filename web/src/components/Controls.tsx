@@ -88,10 +88,10 @@ export default function Controls({
           size="sm"
           onClick={onCleanData}
           className="text-neutral-500 hover:text-dislike hover:bg-transparent"
-          title="Reset taste profile"
+          title="Clear all data"
         >
           <RotateCcw className="size-3.5" />
-          Reset taste
+          Clear data
         </Button>
       </div>
 

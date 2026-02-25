@@ -199,9 +199,12 @@ class RadioEngine:
         return True
 
     async def clean_radio(self):
-        """Reset taste profile for the current radio."""
+        """Reset all user data for the current radio (taste + tracks + favorites)."""
         if self.radio:
-            self.radio.reset_taste()
+            self.player.stop()
+            self.radio.full_reset()
+            self._queued_track = None
+            self._queued_params = None
 
     async def set_first_vibe(self, text: str):
         """Set initial direction for a new radio (first-run flow)."""

@@ -61,6 +61,13 @@ class Radio:
         """Wipe taste profile completely — fresh start."""
         self.save_taste(dict(_EMPTY_TASTE))
 
+    def full_reset(self):
+        """Wipe taste profile + all tracks + favorites."""
+        self.reset_taste()
+        shutil.rmtree(self.tracks_dir, ignore_errors=True)
+        shutil.rmtree(self.favorites_dir, ignore_errors=True)
+        self._ensure_dirs()
+
     def add_reaction(self, params: dict, signal: Optional[str]):
         """signal: 'liked' | 'disliked' | 'skipped' | None (neutral)"""
         if signal is None:

@@ -2,7 +2,7 @@
 import base64
 import httpx
 
-from .config import ACESTEP_HOST, ACESTEP_TIMEOUT, DEFAULT_DURATION, DEFAULT_INFER_STEPS, ACESTEP_MODEL
+from .config import ACESTEP_HOST, ACESTEP_TIMEOUT, DEFAULT_DURATION, ACESTEP_MODEL
 
 
 async def check_server(host: str = ACESTEP_HOST) -> bool:
@@ -41,7 +41,6 @@ async def generate_track(params: dict, output_path) -> tuple[bool, str]:
     audio_config = {
         "duration": DEFAULT_DURATION,
         "instrumental": instrumental,
-        "inference_steps": DEFAULT_INFER_STEPS,
     }
     if params.get("bpm"):
         audio_config["bpm"] = params["bpm"]
