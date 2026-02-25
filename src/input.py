@@ -21,6 +21,20 @@ def _read_one_char() -> str:
         termios.tcsetattr(fd, termios.TCSADRAIN, old)
 
 
+def _read_one_char_timeout(timeout: float = 0.3) -> str | None:
+    """Read one char if available within timeout, else return None."""
+    fd = sys.stdin.fileno()
+    old = termios.tcgetattr(fd)
+    try:
+        tty.setraw(fd)
+        readable, _, _ = _sel.select([sys.stdin], [], [], timeout)
+        if readable:
+            return sys.stdin.read(1)
+        return None
+    finally:
+        termios.tcsetattr(fd, termios.TCSADRAIN, old)
+
+
 def _read_nav_key() -> str:
     """Read one logical keypress in raw mode; return a normalised action string."""
     fd = sys.stdin.fileno()
@@ -54,6 +68,7 @@ async def get_user_input(
     gen_start: Optional[float] = None,
     status_params: Optional[dict] = None,
     sleep_deadline: Optional[float] = None,
+    break_event: Optional[asyncio.Event] = None,
 ) -> str:
     """Read input with cursor navigation, live generation progress, and in-place updates.
 
@@ -210,7 +225,16 @@ async def get_user_input(
 
     try:
         while True:
-            ch = await loop.run_in_executor(None, _read_one_char)
+            if break_event:
+                if break_event.is_set():
+                    sys.stdout.write("\n")
+                    sys.stdout.flush()
+                    return buf[0].strip()
+                ch = await loop.run_in_executor(None, _read_one_char_timeout)
+                if ch is None:
+                    continue
+            else:
+                ch = await loop.run_in_executor(None, _read_one_char)
 
             # ── Space (empty buffer) or Ctrl+P → pause / resume ──────────────
             if ch == "\x10" or (ch == " " and not buf[0]):

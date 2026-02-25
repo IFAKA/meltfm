@@ -156,6 +156,7 @@ async def main():
 
         if player.is_playing() or player.is_paused():
             # ── Inner input loop ──────────────────────────────────────
+            input_break = asyncio.Event()
             while True:
                 async def _auto_advance():
                     nonlocal interrupt_when_ready, queued_track, queued_params, auto_advanced
@@ -182,6 +183,7 @@ async def main():
                                 queued_params = params
                                 auto_advanced = True
                                 print_now_playing(params, next_path)
+                                input_break.set()
                                 return
 
                     while True:
@@ -201,6 +203,7 @@ async def main():
                                 queued_params = params
                                 auto_advanced = True
                                 print_now_playing(params, next_path)
+                                input_break.set()
                                 continue
                         if queued_track and queued_track.exists():
                             player.replay()
@@ -213,6 +216,7 @@ async def main():
                     gen_start=gen_start,
                     status_params=queued_params,
                     sleep_deadline=sleep_deadline,
+                    break_event=input_break,
                 )
                 advance_watcher.cancel()
 
