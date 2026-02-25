@@ -21,10 +21,12 @@ from src.preflight import run_preflight
 from src.errors import format_error
 from src.ui import (
     print_header,
+    print_startup,
     print_incoming,
     print_now_playing,
     print_status_line,
     print_recipe,
+    print_help,
     show_reaction_feedback,
     friendly_redirect,
     show_generation_progress,
@@ -43,12 +45,8 @@ from src.commands import (
 player = Player()
 manager = RadioManager()
 
-_HELP_TEXT = (
-    "\n  [dim]Try: love it · skip · more bass · something different"
-    " · save this · what is this · tracks · radios · switch to <name> · help · quit[/dim]"
-    "\n  [dim]Sleep timer: sleep 30 · sleep 1h · sleep off · sleep[/dim]"
-    "\n  [dim]Shortcuts: Space = pause/resume · ↑↓ = volume · ←→ = seek ±5s[/dim]\n"
-)
+def _show_help():
+    print_help()
 
 
 async def main():
@@ -69,27 +67,10 @@ async def main():
             radio.set_direction(first_input)
         last_reaction = first_input or ""
     else:
-        taste = radio.load_taste()
-        count = taste.get("generation_count", 0)
-        console.print(
-            f"\n  [bold green]Welcome back.[/bold green]"
-            f" You've generated [bold]{count}[/bold] tracks on [bold]{radio.name}[/bold]."
-        )
-        history = radio.get_history(1)
-        if history:
-            last = history[0]
-            tags = last.get("tags", "")[:40]
-            reaction = last.get("reaction", "neutral")
-            last_played = radio.get_last_played_fmt()
-            color = {"liked": "green", "disliked": "red", "skipped": "yellow"}.get(reaction, "dim")
-            console.print(
-                f"  [dim]Last:[/dim] {last.get('id','?')}-{tags}"
-                f"  ·  [{color}]{reaction}[/{color}]"
-                f"  ·  [dim]{last_played}[/dim]"
-            )
+        print_startup(radio)
         last_reaction = ""
 
-    console.print(_HELP_TEXT)
+    _show_help()
 
     last_params: Optional[dict] = None
     queued_track: Optional[Path] = None
@@ -241,7 +222,7 @@ async def main():
 
                 # ── Info commands — handle and re-prompt ──────────────
                 if reaction["command"] == "help":
-                    console.print(_HELP_TEXT)
+                    _show_help()
                     continue
 
                 if reaction["command"] == "save":
@@ -312,7 +293,7 @@ async def main():
             # If generation still running after input — show progress (with looping)
             if not gen_task.done():
                 success, err = await show_generation_progress(
-                    gen_task, "  ◈  Finishing track", loop_player=player,
+                    gen_task, "  ◈  Finishing track", loop_player=player, gen_params=params,
                 )
             else:
                 try:
@@ -321,7 +302,7 @@ async def main():
                     success, err = False, str(e)
         else:
             # Nothing playing — show progress bar until gen done, then play + prompt
-            success, err = await show_generation_progress(gen_task, loop_player=player)
+            success, err = await show_generation_progress(gen_task, loop_player=player, gen_params=params)
 
             if success:
                 dur = get_audio_duration(next_path)

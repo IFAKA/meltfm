@@ -15,9 +15,10 @@ from .config import (
     VALID_TIME_SIGS,
     VALID_KEYS,
 )
+from .tags import validate_and_order_tags, GENRES, MOODS, INSTRUMENTS, VOCALS, TEXTURES
 
 _SYSTEM_PROMPT = """\
-You are a personal music director for an AI radio.
+You are a personal music director for an AI radio station.
 
 Your job: given the listener's taste profile and their latest message, output the NEXT track parameters as JSON.
 
@@ -25,28 +26,66 @@ OUTPUT ONLY valid JSON — no markdown, no explanation, no code fences.
 
 Required JSON fields:
 {
-  "tags": "5-12 comma-separated tags: genres, instruments, moods, techniques",
+  "tags": "ordered comma-separated tags covering 5 dimensions (see below)",
+  "lyrics": "full song lyrics with section markers (see rules)",
   "bpm": <integer 60-180>,
   "key_scale": "<note> <Major|Minor>",
   "time_signature": <3|4|6>,
   "vocal_language": "en",
   "instrumental": <true|false>,
-  "lyric_theme": "2-4 short thematic phrases or key words for vocal content — write in the same language as vocal_language. ONLY set when instrumental=false, else set to empty string.",
   "rationale": "one sentence: what you're doing and why"
 }
 
-Rules:
-- BPM reflects the dominant genre's natural energy
+=== TAG DIMENSIONS (order matters!) ===
+
+Tags MUST follow this order: genre → mood → instruments → vocal → texture
+
+1. Genre (1-2): the primary musical style
+   Examples: indie rock, jazz, trip hop, drum and bass, ambient, hip hop, folk, techno
+
+2. Mood (1-3): the emotional character
+   Examples: dreamy, nostalgic, energetic, melancholic, euphoric, dark, intimate, triumphant
+
+3. Instruments (2-4): the dominant sonic palette
+   Examples: electric guitar, synth pad, drums, piano, 808, strings, acoustic guitar, brass
+
+4. Vocal (1): the vocal type
+   Options: male vocal, female vocal, male rap, female rap, vocal harmony, vocal chops, spoken word, instrumental
+
+5. Texture (0-2): the sonic quality / production feel
+   Examples: lo-fi, warm, crisp, airy, punchy, vintage, ethereal, gritty, lush
+
+Total tags: 7-12. Max 14.
+
+=== LYRICS RULES ===
+
+- Use section markers: [Verse 1], [Chorus], [Verse 2], [Bridge], [Outro]
+- Write 2-4 lines per section, matching the vocal_language
+- Capture the mood and theme, not perfect poetry
+- For instrumental tracks: set lyrics to "[inst]"
+- Vocal control tags go in section markers: [Chorus - anthemic], [Bridge - whispered], [Verse 1 - raspy vocal]
+
+=== CRITICAL RULES ===
+
+- Do NOT put BPM, key, or tempo words in tags — use the dedicated bpm/key_scale fields
+- BPM reflects the genre's natural energy (e.g., trap ~140, jazz ~90, house ~125)
 - If listener liked recent tracks: keep what worked, evolve subtly
 - If listener said "reset" or "something different": bold departure
 - If listener gave modifiers ("more bass", "slower"): apply them directly
 - If taste profile has explicit_notes: respect them always
-- Vibe descriptions → genre tags + mood tags
-- Instrument-only requests → set instrumental=true
-- Contradictions → find musical middle ground
-- Never exceed ranges: BPM [60-180], time_sig must be one of [3, 4, 6], key must be a standard key like "F# Minor" or "C Major"
-- lyric_theme: only for vocal tracks — write 2-4 short phrases in the vocal_language that capture the thematic vibe (e.g. "Lord have mercy, Theotokos intercede, repentance, seek salvation"). NOT full lyrics. Always empty string for instrumentals.
+- Never exceed ranges: BPM [60-180], time_sig [3, 4, 6], key like "F# Minor" or "C Major"
 - Do NOT include any field other than the 8 listed above
+
+=== EXAMPLES ===
+
+Rock track:
+{"tags": "indie rock, nostalgic, electric guitar, drums, bass guitar, male vocal, warm", "lyrics": "[Verse 1]\\nWalking down the street at dusk\\nNeon signs reflect the rain\\n\\n[Chorus - anthemic]\\nWe were young and didn't know\\nHow fast the colors fade\\n\\n[Verse 2]\\nPhotographs in cardboard boxes\\nSmiling faces, other names", "bpm": 118, "key_scale": "D Major", "time_signature": 4, "vocal_language": "en", "instrumental": false, "rationale": "Nostalgic indie rock with warm guitar tones"}
+
+Electronic track:
+{"tags": "deep house, hypnotic, groovy, synth bass, drums, hi-hat, synth pad, instrumental, warm", "lyrics": "[inst]", "bpm": 124, "key_scale": "G Minor", "time_signature": 4, "vocal_language": "en", "instrumental": true, "rationale": "Deep hypnotic house groove with warm analog feel"}
+
+Jazz track:
+{"tags": "jazz, intimate, smooth, piano, upright bass, drums, alto sax, male vocal, vintage", "lyrics": "[Verse 1 - smooth]\\nSmoke curls above the piano keys\\nA melody only midnight sees\\n\\n[Chorus]\\nPlay it slow, play it low\\nLet the rhythm breathe", "bpm": 88, "key_scale": "Eb Major", "time_signature": 4, "vocal_language": "en", "instrumental": false, "rationale": "Intimate jazz club atmosphere with vintage warmth"}
 """
 
 _STRICT_SUFFIX = "\n\nCRITICAL: Output ONLY the JSON object. No words before or after. Start with { and end with }."
@@ -131,19 +170,27 @@ def _parse_json(raw: str) -> Optional[dict]:
     except json.JSONDecodeError:
         pass
 
-    # Extract first {...} block
-    match = re.search(r"\{[^{}]*\}", raw, re.DOTALL)
-    if match:
-        try:
-            return json.loads(match.group())
-        except json.JSONDecodeError:
-            pass
+    # Extract first {...} block (handle nested braces)
+    depth = 0
+    start = None
+    for i, ch in enumerate(raw):
+        if ch == "{":
+            if depth == 0:
+                start = i
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0 and start is not None:
+                try:
+                    return json.loads(raw[start:i + 1])
+                except json.JSONDecodeError:
+                    start = None
 
     return None
 
 
 def _validate_and_clamp(params: dict) -> dict:
-    """Ensure all fields are valid. Clamp out-of-range values."""
+    """Ensure all fields are valid. Clamp out-of-range values. Normalize tags."""
     # BPM
     try:
         bpm = int(params.get("bpm", 120))
@@ -163,9 +210,12 @@ def _validate_and_clamp(params: dict) -> dict:
     if not isinstance(ks, str) or not re.match(r"^[A-G][b#]?\s+(Major|Minor)$", ks.strip()):
         params["key_scale"] = "A Minor"
 
-    # Tags
-    if not isinstance(params.get("tags"), str) or not params["tags"].strip():
-        params["tags"] = "experimental, atmospheric"
+    # Tags — normalize and validate through whitelist pipeline
+    raw_tags = params.get("tags", "")
+    if isinstance(raw_tags, str) and raw_tags.strip():
+        params["tags"] = validate_and_order_tags(raw_tags)
+    else:
+        params["tags"] = "atmospheric, experimental"
 
     # Instrumental
     params["instrumental"] = bool(params.get("instrumental", True))
@@ -181,46 +231,123 @@ def _validate_and_clamp(params: dict) -> dict:
     # Seed
     params.setdefault("seed", random.randint(0, 99999))
 
-    # lyric_theme: stripped for instrumentals, capped at 200 chars otherwise
+    # Lyrics: instrumental → [inst], vocal → keep LLM lyrics (capped)
     if params.get("instrumental", True):
-        params["lyric_theme"] = ""
-    elif not isinstance(params.get("lyric_theme"), str) or not params["lyric_theme"].strip():
-        params["lyric_theme"] = ""   # fallback: acestep.py will use "la la la"
+        params["lyrics"] = "[inst]"
     else:
-        params["lyric_theme"] = params["lyric_theme"].strip()[:200]
+        lyrics = params.get("lyrics", "")
+        # Accept lyric_theme as fallback for backwards compat
+        if not lyrics:
+            lyrics = params.get("lyric_theme", "")
+        if isinstance(lyrics, str) and lyrics.strip():
+            params["lyrics"] = lyrics.strip()[:1000]
+        else:
+            params["lyrics"] = "[Verse 1]\nla la la\n\n[Chorus]\nla la la"
+
+    # Remove old field if present
+    params.pop("lyric_theme", None)
 
     return params
 
 
+# ── Mood-to-instrument mapping for keyword fallback ───────────────────────────
+
+_MOOD_INSTRUMENT_MAP = {
+    "chill":  ["synth pad", "electric piano", "drums"],
+    "energy": ["drums", "synth bass", "electric guitar"],
+    "focus":  ["piano", "synth pad", "strings"],
+    "sad":    ["piano", "strings", "cello"],
+    "happy":  ["acoustic guitar", "piano", "drums"],
+    "party":  ["drums", "synth bass", "808"],
+    "sleep":  ["synth pad", "piano", "strings"],
+}
+
+
 def _keyword_fallback(user_message: str) -> dict:
-    """Safe defaults extracted from keywords in the user's message."""
+    """Safe defaults extracted from keywords in the user's message.
+    Uses tags.py whitelists for matching, produces properly ordered tags."""
     msg = user_message.lower()
-    tags = []
+    found_genres: list[str] = []
+    found_moods: list[str] = []
+    found_instruments: list[str] = []
+    found_vocal: str = "instrumental"
+    found_textures: list[str] = []
 
-    genre_keywords = [
-        "jazz", "blues", "rock", "pop", "electronic", "ambient", "classical",
-        "hip hop", "hip-hop", "drill", "trap", "techno", "house", "reggae",
-        "folk", "soul", "funk", "metal", "punk", "indie", "r&b", "rnb",
-        "ethiopian", "afrobeat", "latin", "bossa nova", "flamenco",
-        "dark", "bright", "slow", "fast", "heavy", "light", "mellow",
-    ]
-    for kw in genre_keywords:
-        if kw in msg:
-            tags.append(kw)
+    # Match genres from whitelist
+    for g in GENRES:
+        if g in msg:
+            found_genres.append(g)
+            if len(found_genres) >= 2:
+                break
 
+    # Match moods from whitelist
+    for m in MOODS:
+        if m in msg:
+            found_moods.append(m)
+            if len(found_moods) >= 3:
+                break
+
+    # Match instruments from whitelist
+    for i in INSTRUMENTS:
+        if i in msg:
+            found_instruments.append(i)
+            if len(found_instruments) >= 4:
+                break
+
+    # Match vocal type
+    for v in VOCALS:
+        if v in msg:
+            found_vocal = v
+            break
+
+    # Match textures
+    for t in TEXTURES:
+        if t in msg:
+            found_textures.append(t)
+            if len(found_textures) >= 2:
+                break
+
+    # Apply mood→instrument mapping if we have a mood but no instruments
+    if found_moods and not found_instruments:
+        for mood_key, instruments in _MOOD_INSTRUMENT_MAP.items():
+            if mood_key in msg:
+                found_instruments = instruments[:3]
+                break
+
+    # Defaults if nothing matched
+    if not found_genres:
+        found_genres = ["atmospheric"]
+    if not found_moods:
+        found_moods = ["experimental"]
+    if not found_instruments:
+        found_instruments = ["synth pad", "drums"]
+
+    # Assemble in proper order
+    tags_parts = found_genres[:2] + found_moods[:3] + found_instruments[:4] + [found_vocal] + found_textures[:2]
+    tags = ", ".join(tags_parts)
+
+    # BPM heuristic
     bpm = 110
-    if any(w in msg for w in ["slow", "chill", "relax", "ambient", "mellow"]):
+    if any(w in msg for w in ["slow", "chill", "relax", "ambient", "mellow", "sleep", "dream"]):
         bpm = 80
-    elif any(w in msg for w in ["fast", "energy", "pump", "hype", "dance"]):
+    elif any(w in msg for w in ["fast", "energy", "pump", "hype", "dance", "party", "trap"]):
         bpm = 140
 
+    is_instrumental = found_vocal == "instrumental"
+
+    # Basic lyrics for vocal tracks
+    lyrics = "[inst]"
+    if not is_instrumental:
+        lyrics = "[Verse 1]\nla la la\n\n[Chorus]\nla la la"
+
     return {
-        "tags": ", ".join(tags[:8]) if tags else "atmospheric, experimental",
+        "tags": tags,
+        "lyrics": lyrics,
         "bpm": bpm,
         "key_scale": "A Minor",
         "time_signature": 4,
         "vocal_language": "en",
-        "instrumental": True,
+        "instrumental": is_instrumental,
         "rationale": f"Keyword fallback from: '{user_message[:60]}'",
         "seed": random.randint(0, 99999),
     }

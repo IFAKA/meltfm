@@ -10,6 +10,7 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 from rich.live import Live
+from rich.columns import Columns
 
 from .config import APP_VERSION, DEFAULT_DURATION
 from .manager import Radio
@@ -36,34 +37,91 @@ def fmt_countdown(deadline: float) -> str:
 def print_header():
     console.print(
         f"\n  [bold cyan]♪  Personal Radio[/bold cyan]"
-        f"  ·  v{APP_VERSION}"
-        f"  ·  powered by ACE-Step + Ollama\n"
+        f"  [dim]v{APP_VERSION}[/dim]"
     )
 
 
+def print_startup(radio: Radio):
+    """Show polished startup panel with radio info."""
+    taste = radio.load_taste()
+    count = taste.get("generation_count", 0)
+    fav_count = len(list(radio.favorites_dir.glob("*.mp3")))
+    notes = taste.get("explicit_notes", [])
+
+    lines: list[str] = []
+    lines.append(f"  [bold]{count}[/bold] tracks · [bold]{fav_count}[/bold] favorites")
+
+    history = radio.get_history(1)
+    if history:
+        last = history[0]
+        tags = last.get("tags", "")[:40]
+        reaction = last.get("reaction", "neutral")
+        icon = {"liked": "[green]♥[/green]", "disliked": "[red]✗[/red]", "skipped": "[yellow]»[/yellow]"}.get(reaction, "[dim]·[/dim]")
+        last_played = radio.get_last_played_fmt()
+        lines.append(f"  Last: {tags}  {icon}  [dim]{last_played}[/dim]")
+
+    if notes:
+        mood = notes[-1][:50]
+        lines.append(f"  Vibe: [italic]{mood}[/italic]")
+
+    body = "\n".join(lines)
+    console.print(Panel(
+        body,
+        title=f"[bold cyan]♪[/bold cyan] {radio.name}",
+        border_style="cyan",
+        expand=False,
+        padding=(0, 1),
+    ))
+
+
 def print_incoming(params: dict):
-    console.print(f"\n  [bold yellow]✦  Building next track...[/bold yellow]")
-    console.print(f"     [italic]\"{params.get('rationale', '')}\"[/italic]")
+    """Show what's being built — compact preview of next track."""
     tags = params.get("tags", "")
     bpm = params.get("bpm", "?")
     key = params.get("key_scale", "?")
     ts = params.get("time_signature", 4)
-    inst = "instrumental" if params.get("instrumental") else "with vocals"
-    console.print(f"     [dim]Tags:[/dim] {tags}")
-    console.print(f"     [dim]{bpm} BPM · {key} · {ts}/4 · {inst}[/dim]")
+    inst = "instrumental" if params.get("instrumental") else "vocal"
+    rationale = params.get("rationale", "")
+
+    lines = [f"  [dim]{tags}[/dim]"]
+    lines.append(f"  [dim]{bpm} BPM · {key} · {ts}/4 · {inst}[/dim]")
+    if rationale:
+        lines.append(f'  [italic dim]"{rationale}"[/italic dim]')
+
+    console.print(Panel(
+        "\n".join(lines),
+        title="[bold yellow]✦[/bold yellow] Building next track",
+        border_style="yellow",
+        expand=False,
+        padding=(0, 1),
+    ))
 
 
 def print_now_playing(params: dict, track_path: Optional[Path] = None):
-    track_id = params.get("id", "???")
+    """Panel-based now-playing display with tags, metadata, and rationale."""
+    tags = params.get("tags", "")
     bpm = params.get("bpm", "?")
     key = params.get("key_scale", "?")
-    dur = DEFAULT_DURATION
-    name = track_path.stem if track_path else f"track-{track_id}"
-    console.print(
-        f"\n  [bold green]♫  Now playing:[/bold green] {name}"
-        f"  ·  {bpm} BPM  ·  {key}  ·  {dur}s"
-    )
-    console.print("     " + "─" * 52)
+    ts = params.get("time_signature", 4)
+    inst = "instrumental" if params.get("instrumental") else params.get("vocal_language", "vocal")
+    rationale = params.get("rationale", "")
+
+    # Split tags into genre/mood line and instruments line for readability
+    tag_list = [t.strip() for t in tags.split(",")]
+    line1 = ", ".join(tag_list)
+
+    lines = [f"  [bold]{line1}[/bold]"]
+    lines.append(f"  {bpm} BPM · {key} · {ts}/4 · {inst}")
+    if rationale:
+        lines.append(f'  [italic]"{rationale}"[/italic]')
+
+    console.print(Panel(
+        "\n".join(lines),
+        title="[bold green]♫[/bold green] Now playing",
+        border_style="green",
+        expand=False,
+        padding=(0, 1),
+    ))
 
 
 def print_status_line(params: Optional[dict], player, is_paused: bool, volume: int, sleep_deadline: Optional[float] = None):
@@ -146,6 +204,30 @@ def print_recipe(params: dict):
     ))
 
 
+def print_help():
+    """Polished help screen with organized sections."""
+    from rich.box import ROUNDED
+
+    sections = [
+        ("Reactions", "love it · nice · skip · nope · something different"),
+        ("Modifiers", "more bass · less drums · add piano · faster · darker"),
+        ("Commands", "save · info · tracks · radios · switch <name> · help · quit"),
+        ("Sleep", "sleep 30 · sleep 1h · sleep off · sleep"),
+        ("Shortcuts", "Space pause · ↑↓ volume · ←→ seek · Ctrl+D quit"),
+    ]
+
+    lines: list[str] = []
+    for title, content in sections:
+        lines.append(f"  [bold]{title}[/bold]  [dim]│[/dim]  {content}")
+
+    console.print(Panel(
+        "\n".join(lines),
+        border_style="dim",
+        expand=False,
+        padding=(0, 1),
+    ))
+
+
 def show_reaction_feedback(reaction: dict):
     """Show a brief visual confirmation of what we understood from user input."""
     parts: list[str] = []
@@ -210,15 +292,25 @@ async def show_generation_progress(
     label: str = "  ◈  Generating",
     est_seconds: int = 60,
     loop_player=None,
+    gen_params: Optional[dict] = None,
 ) -> tuple[bool, str]:
     """Show Rich Live progress bar until gen_task completes. Returns (success, error).
 
+    If gen_params is provided, shows what's being generated.
     If loop_player is provided and has a current track, it will replay that
     track whenever it ends — filling the silence gap while waiting.
     """
     start = time.monotonic()
     bar_len = 24
     looping = loop_player is not None and loop_player.current_track is not None
+
+    # Build context line from params
+    context = ""
+    if gen_params:
+        tags = gen_params.get("tags", "")[:50]
+        bpm = gen_params.get("bpm", "")
+        key = gen_params.get("key_scale", "")
+        context = f"\n     [dim]{tags} · {bpm} BPM · {key}[/dim]"
 
     with Live(console=console, refresh_per_second=8) as live:
         while not gen_task.done():
@@ -229,7 +321,7 @@ async def show_generation_progress(
             filled = min(bar_len, int(elapsed / est_seconds * bar_len))
             bar = "[green]" + "━" * filled + "[/green][dim]" + "·" * (bar_len - filled) + "[/dim]"
             loop_tag = "  [dim]♪ looping[/dim]" if looping else ""
-            live.update(Text.from_markup(f"{label}...  [{bar}]  {elapsed:.0f}s{loop_tag}"))
+            live.update(Text.from_markup(f"{label}...  {bar}  {elapsed:.0f}s{loop_tag}{context}"))
             await asyncio.sleep(0.12)
 
         elapsed = time.monotonic() - start

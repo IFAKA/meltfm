@@ -21,16 +21,13 @@ def _build_content(params: dict) -> str:
     instrumental = params.get("instrumental", True)
 
     if instrumental:
-        return f"<prompt>{tags}</prompt>"
+        return f"<prompt>{tags}</prompt><lyrics>[inst]</lyrics>"
 
-    theme = params.get("lyric_theme", "").strip()
-    if theme:
-        lines = [ln.strip() for ln in theme.replace(",", "\n").split("\n") if ln.strip()]
-        lyrics_body = "\n".join(lines[:4])
-    else:
-        lyrics_body = "la la la"
+    lyrics = params.get("lyrics", "").strip()
+    if not lyrics or lyrics == "[inst]":
+        lyrics = "[Verse 1]\nla la la\n\n[Chorus]\nla la la"
 
-    return f"<prompt>{tags}</prompt><lyrics>[verse]\n{lyrics_body}</lyrics>"
+    return f"<prompt>{tags}</prompt><lyrics>{lyrics}</lyrics>"
 
 
 async def generate_track(params: dict, output_path) -> tuple[bool, str]:
