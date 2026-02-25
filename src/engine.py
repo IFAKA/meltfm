@@ -50,6 +50,7 @@ class RadioEngine:
 
         # Track tick task
         self._tick_task: Optional[asyncio.Task] = None
+        self._model_ensured = False
 
     # ── Public API (called from WebSocket handlers) ──────────────────────────
 
@@ -306,10 +307,13 @@ class RadioEngine:
 
         # ── Check ACE-Step is up before burning LLM tokens ───────────────
         if not await acestep_check_server():
+            self._model_ensured = False  # reset so we re-activate after restart
             await self.state.broadcast("error", {"message": "ACE-Step not available, retrying in 15s..."})
             await asyncio.sleep(15)
             return
-        await acestep_ensure_model()
+        if not self._model_ensured:
+            self._model_ensured = await acestep_ensure_model()
+
 
         # ── Detect stuck LLM ────────────────────────────────────────────
         inject_vary = ""
