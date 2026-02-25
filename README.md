@@ -1,4 +1,4 @@
-# ai-radio
+# meltfm
 
 Local AI radio that generates music continuously using ACE-Step + Ollama, shaped by your taste in plain language.
 
@@ -14,51 +14,55 @@ Local AI radio that generates music continuously using ACE-Step + Ollama, shaped
 - macOS Apple Silicon (M1/M2/M3/M4)
 - [Homebrew](https://brew.sh)
 
-Everything else is installed automatically by `setup.sh`.
+Everything else is installed automatically.
 
 ---
 
-## Install
+## Setup (first time only)
+
+### Step 1 — Install everything
 
 ```bash
-git clone https://github.com/IFAKA/ai-radio.git
-cd ai-radio
+git clone https://github.com/IFAKA/meltfm.git
+cd meltfm
 ./setup.sh
 ```
 
-`setup.sh` will automatically:
-- Install `uv` and `python@3.12`
-- Install and start Ollama, pull the LLM model
-- Clone and install ACE-Step with the correct Python version
-- Set up the `radio` shell alias
+Installs: `uv`, `python@3.12`, Ollama + LLM model, ACE-Step.
 
 ---
 
-## Start ACE-Step (one-time, separate terminal)
+### Step 2 — Download ACE-Step model weights (~20–40 GB)
 
-ACE-Step runs as its own server. Start it once and leave it running:
+This is a one-time download. Open a **separate terminal** and run:
 
 ```bash
 cd ~/ACE-Step
 ./start_api_server_macos.sh
 ```
 
-**First run downloads model weights (~20–40 GB)** — takes 30–60 min depending on your connection. Wait for:
+Wait until you see:
 
 ```
 API will be available at: http://127.0.0.1:8001
 ```
 
+> Takes 30–60 min on first run. After that, ACE-Step starts in ~2 minutes.
+
+Leave this terminal open.
+
 ---
 
-## Run
+### Step 3 — Run
 
-Once ACE-Step is up, in a new terminal:
+In a new terminal:
 
 ```bash
 radio
 # or: uv run python radio.py
 ```
+
+> From the second run onwards, ACE-Step starts automatically — you only need one terminal.
 
 ---
 
@@ -94,6 +98,18 @@ Add notes to permanently shape a station's sound:
 > lyrics in rioplatense spanish, lunfardo slang, barrio themes
 > always instrumental, heavy 808s, dark trap
 ```
+
+---
+
+## Reset
+
+To start fresh (removes all stations, tracks, taste profiles, and metrics):
+
+```bash
+rm -rf radios/
+```
+
+Next time you run `radio`, everything is recreated from scratch.
 
 ---
 
