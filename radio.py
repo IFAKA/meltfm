@@ -1158,7 +1158,7 @@ async def main():
             _commit_track()
             queued_track = next_path
             queued_params = params
-            last_reaction = ""
+            # Keep last_reaction so LLM continues evolving the same direction
             last_params = params
             recent_params = (recent_params + [params])[-5:]
             continue
@@ -1170,7 +1170,7 @@ async def main():
                 _commit_track()
                 queued_track = next_path
                 queued_params = params
-                last_reaction = ""
+                # Keep last_reaction so LLM continues evolving the same direction
                 last_params = params
                 recent_params = (recent_params + [params])[-5:]
                 continue
