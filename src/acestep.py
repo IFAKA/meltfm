@@ -2,7 +2,7 @@
 import base64
 import httpx
 
-from .config import ACESTEP_HOST, ACESTEP_TIMEOUT, DEFAULT_DURATION
+from .config import ACESTEP_HOST, ACESTEP_TIMEOUT, DEFAULT_DURATION, DEFAULT_INFER_STEPS, ACESTEP_MODEL
 
 
 async def check_server(host: str = ACESTEP_HOST) -> bool:
@@ -41,6 +41,7 @@ async def generate_track(params: dict, output_path) -> tuple[bool, str]:
     audio_config = {
         "duration": DEFAULT_DURATION,
         "instrumental": instrumental,
+        "inference_steps": DEFAULT_INFER_STEPS,
     }
     if params.get("bpm"):
         audio_config["bpm"] = params["bpm"]
@@ -55,7 +56,7 @@ async def generate_track(params: dict, output_path) -> tuple[bool, str]:
         audio_config["vocal_language"] = params["vocal_language"]
 
     payload = {
-        "model": "acemusic/acestep-v15-turbo",
+        "model": ACESTEP_MODEL,
         "messages": [{"role": "user", "content": _build_content(params)}],
         "audio_config": audio_config,
         "seed": params.get("seed", -1),
