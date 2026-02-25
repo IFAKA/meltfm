@@ -29,7 +29,7 @@ class Player:
         self._current: Optional[Path] = None
         self._source: Optional[Path] = None
         self._paused: bool = False
-        self._volume: int = self._get_system_volume()
+        self._volume: int = 80
         self._play_start: float = 0.0
         self._duration: Optional[float] = None
         self._paused_at: float = 0.0
@@ -45,7 +45,7 @@ class Player:
         """Start afplay for the given file. Stops any current playback first."""
         self.stop()
         self._proc = subprocess.Popen(
-            ["afplay", str(path)],
+            ["afplay", "-v", str(self._volume / 100), str(path)],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )
@@ -170,12 +170,13 @@ class Player:
 
         self._cleanup_temp()
 
-        tmp = Path(tempfile.mktemp(suffix=".wav"))
+        suffix = source.suffix or ".mp3"
+        tmp = Path(tempfile.mktemp(suffix=suffix))
         try:
             subprocess.run(
                 ["ffmpeg", "-y", "-loglevel", "error",
                  "-ss", str(new_pos), "-i", str(source),
-                 "-f", "wav", str(tmp)],
+                 "-c", "copy", str(tmp)],
                 capture_output=True, timeout=15,
             )
             if not tmp.exists() or tmp.stat().st_size < 100:
@@ -206,7 +207,7 @@ class Player:
 
         # Start playing from temp file
         self._proc = subprocess.Popen(
-            ["afplay", str(tmp)],
+            ["afplay", "-v", str(self._volume / 100), str(tmp)],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )
@@ -270,36 +271,23 @@ class Player:
 
     def volume_up(self, step: int = 10) -> int:
         self._volume = min(100, self._volume + step)
-        self._set_system_volume(self._volume)
+        self._apply_volume()
         return self._volume
 
     def volume_down(self, step: int = 10) -> int:
         self._volume = max(0, self._volume - step)
-        self._set_system_volume(self._volume)
+        self._apply_volume()
         return self._volume
 
     def set_volume(self, level: int) -> int:
         self._volume = max(0, min(100, level))
-        self._set_system_volume(self._volume)
+        self._apply_volume()
         return self._volume
 
-    @staticmethod
-    def _get_system_volume() -> int:
-        try:
-            result = subprocess.run(
-                ["osascript", "-e", "output volume of (get volume settings)"],
-                capture_output=True, text=True, timeout=2,
-            )
-            return int(result.stdout.strip())
-        except Exception:
-            return 50
-
-    @staticmethod
-    def _set_system_volume(level: int):
-        try:
-            subprocess.run(
-                ["osascript", "-e", f"set volume output volume {level}"],
-                check=False, timeout=2,
-            )
-        except Exception:
-            pass
+    def _apply_volume(self):
+        """Restart afplay at current position with new volume level."""
+        if not self.is_playing() and not self._paused:
+            return
+        # Seek by 0 seconds — restarts afplay at current position,
+        # which picks up the new self._volume via the -v flag.
+        self.seek(0)
