@@ -15,6 +15,24 @@ async def check_server(host: str = ACESTEP_HOST) -> bool:
         return False
 
 
+async def ensure_model(host: str = ACESTEP_HOST) -> bool:
+    """POST /v1/init to activate ACESTEP_MODEL if it isn't already loaded.
+    Returns True if the model is active after the call."""
+    model_name = ACESTEP_MODEL.split("/")[-1]  # strip 'acestep/' prefix if present
+    try:
+        async with httpx.AsyncClient(timeout=30) as client:
+            r = await client.get(f"{host}/health")
+            if r.status_code == 200:
+                loaded = r.json().get("data", {}).get("loaded_model", "")
+                if loaded == model_name:
+                    return True  # already active
+            # Activate the model via /v1/init
+            r = await client.post(f"{host}/v1/init", json={"model": model_name}, timeout=120)
+            return r.status_code == 200
+    except Exception:
+        return False
+
+
 def _build_content(params: dict) -> str:
     """Build message content for ACE-Step 1.5 tagged mode."""
     tags = params.get("tags", "")

@@ -8,6 +8,7 @@ from pathlib import Path
 import httpx
 
 from .config import OLLAMA_HOST, OLLAMA_MODEL, ACESTEP_HOST
+from .acestep import ensure_model
 
 logger = logging.getLogger(__name__)
 
@@ -104,6 +105,9 @@ async def run_preflight() -> dict:
         started = await try_start_acestep()
         if started:
             acestep = {"ok": True, "auto_started": True}
+
+    if acestep["ok"]:
+        await ensure_model()
 
     return {
         "ollama": ollama,
