@@ -19,7 +19,7 @@ from .player import Player, get_audio_duration
 from .errors import format_error
 from .utils import friendly_redirect
 from .commands import check_disk, update_recipe, append_metric
-from .acestep import check_server as acestep_check_server
+from .acestep import check_server as acestep_check_server, ensure_model as acestep_ensure_model
 
 logger = logging.getLogger(__name__)
 
@@ -309,6 +309,7 @@ class RadioEngine:
             await self.state.broadcast("error", {"message": "ACE-Step not available, retrying in 15s..."})
             await asyncio.sleep(15)
             return
+        await acestep_ensure_model()
 
         # ── Detect stuck LLM ────────────────────────────────────────────
         inject_vary = ""
