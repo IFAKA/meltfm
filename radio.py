@@ -463,7 +463,8 @@ async def get_user_input(
     Shortcuts:
       Space (empty buffer) or Ctrl+P → toggle pause / resume
       ↑ / ↓ arrows                   → volume up / down
-      ← / → arrows                   → move cursor within input
+      ← / → arrows (empty buffer)    → seek ±5s in current track
+      ← / → arrows (with text)       → move cursor within input
     """
     SPINNERS = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
 
@@ -647,13 +648,31 @@ async def get_user_input(
                             sys.stdout.write(f"\r  Vol: {vol}%  ❯ {buf[0]}\033[K")
                             _reposition()
                             sys.stdout.flush()
-                    elif next2 == "C":         # → cursor right
-                        if pos[0] < len(buf[0]):
+                    elif next2 == "C":         # → seek forward / cursor right
+                        if not buf[0] and (player.is_playing() or player.is_paused()):
+                            new_pos = player.seek(5)
+                            if status_params:
+                                _draw_status(player._volume)
+                            elif has_hint:
+                                _draw_hint(f"▶▶ {_fmt_time(new_pos)}")
+                            else:
+                                sys.stdout.write(f"\r  ▶▶ {_fmt_time(new_pos)}  ❯ \033[K")
+                                sys.stdout.flush()
+                        elif pos[0] < len(buf[0]):
                             pos[0] += 1
                             sys.stdout.write("\033[1C")
                             sys.stdout.flush()
-                    elif next2 == "D":         # ← cursor left
-                        if pos[0] > 0:
+                    elif next2 == "D":         # ← seek backward / cursor left
+                        if not buf[0] and (player.is_playing() or player.is_paused()):
+                            new_pos = player.seek(-5)
+                            if status_params:
+                                _draw_status(player._volume)
+                            elif has_hint:
+                                _draw_hint(f"◀◀ {_fmt_time(new_pos)}")
+                            else:
+                                sys.stdout.write(f"\r  ◀◀ {_fmt_time(new_pos)}  ❯ \033[K")
+                                sys.stdout.flush()
+                        elif pos[0] > 0:
                             pos[0] -= 1
                             sys.stdout.write("\033[1D")
                             sys.stdout.flush()
@@ -880,7 +899,7 @@ async def main():
     _HELP_TEXT = (
         "\n  [dim]Try: love it · skip · more bass · something different"
         " · save this · what is this · tracks · radios · switch to <name> · help · quit[/dim]"
-        "\n  [dim]Shortcuts: Space = pause/resume · ↑↓ arrows = volume[/dim]\n"
+        "\n  [dim]Shortcuts: Space = pause/resume · ↑↓ = volume · ←→ = seek ±5s[/dim]\n"
     )
     console.print(_HELP_TEXT)
 
