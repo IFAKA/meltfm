@@ -9,6 +9,7 @@ import History from "./components/History";
 import EventLog from "./components/EventLog";
 import DevPanel from "./components/DevPanel";
 import RadioDropdown from "./components/RadioDropdown";
+import AudioVisualizer from "./components/AudioVisualizer";
 import ShareOverlay from "./components/ShareOverlay";
 import CleanDataDialog from "./components/CleanDataDialog";
 
@@ -49,13 +50,16 @@ export default function App() {
       {/* ── Left / main panel ── */}
       <div className="flex flex-col h-full min-h-0">
         {/* Header */}
-        <header className="flex items-center justify-between px-6 py-4 shrink-0">
+        <header className="flex items-center px-6 py-4 shrink-0 gap-4">
           <RadioDropdown
             currentRadio={state.radioName}
             onSwitch={(name) => send("switch_radio", { name })}
             onCreate={(name, vibe) => send("create_radio", { name, vibe })}
             onDelete={(name) => send("delete_radio", { name })}
           />
+          <div className="flex-1 flex justify-center">
+            <AudioVisualizer isPlaying={state.isPlaying} />
+          </div>
           <div className="flex items-center gap-3">
             <span
               className={`w-2 h-2 rounded-full ${state.connected ? "bg-like" : "bg-dislike animate-pulse"}`}
