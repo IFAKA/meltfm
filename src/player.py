@@ -11,7 +11,20 @@ from typing import Optional
 
 
 def get_audio_duration(path: Path) -> float | None:
-    """Get audio duration in seconds using macOS afinfo. Returns None on failure."""
+    """Get audio duration in seconds. Tries ffprobe first (accurate), falls back to afinfo."""
+    # ffprobe gives exact duration (afinfo's "estimated duration" can be wrong for VBR/AI-generated MP3s)
+    try:
+        result = subprocess.run(
+            ["ffprobe", "-v", "quiet", "-show_entries", "format=duration",
+             "-of", "csv=p=0", str(path)],
+            capture_output=True, text=True, timeout=5,
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            return float(result.stdout.strip())
+    except (FileNotFoundError, Exception):
+        pass
+
+    # Fallback: afinfo (macOS built-in)
     try:
         result = subprocess.run(
             ["afinfo", str(path)],

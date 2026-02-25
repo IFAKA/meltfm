@@ -10,8 +10,6 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 from rich.live import Live
-from rich.columns import Columns
-
 from .config import APP_VERSION, DEFAULT_DURATION
 from .manager import Radio
 
@@ -139,7 +137,9 @@ def print_status_line(params: Optional[dict], player, is_paused: bool, volume: i
         filled = min(bar_len, int(elapsed / dur * bar_len))
         bar_filled = "[green]" + "━" * filled + "[/green]"
         bar_empty = "[dim]" + "·" * (bar_len - filled) + "[/dim]"
-        progress = f"  {fmt_time(elapsed)}/{fmt_time(dur)} {bar_filled}{bar_empty}"
+        # Cap displayed elapsed so it doesn't exceed duration
+        shown_elapsed = min(elapsed, dur)
+        progress = f"  {fmt_time(shown_elapsed)}/{fmt_time(dur)} {bar_filled}{bar_empty}"
     else:
         progress = ""
 
@@ -206,22 +206,17 @@ def print_recipe(params: dict):
 
 def print_help():
     """Polished help screen with organized sections."""
-    from rich.box import ROUNDED
-
-    sections = [
-        ("Reactions", "love it · nice · skip · nope · something different"),
-        ("Modifiers", "more bass · less drums · add piano · faster · darker"),
-        ("Commands", "save · info · tracks · radios · switch <name> · help · quit"),
-        ("Sleep", "sleep 30 · sleep 1h · sleep off · sleep"),
-        ("Shortcuts", "Space pause · ↑↓ volume · ←→ seek · Ctrl+D quit"),
-    ]
-
-    lines: list[str] = []
-    for title, content in sections:
-        lines.append(f"  [bold]{title}[/bold]  [dim]│[/dim]  {content}")
+    table = Table(box=None, show_header=False, padding=(0, 1), pad_edge=False)
+    table.add_column(style="bold", width=10, no_wrap=True)
+    table.add_column()
+    table.add_row("Reactions", "love it · nice · skip · nope · something different")
+    table.add_row("Modifiers", "more bass · less drums · add piano · faster · darker")
+    table.add_row("Commands", "save · info · tracks · radios · switch <name> · help · quit")
+    table.add_row("Sleep", "sleep 30 · sleep 1h · sleep off · sleep")
+    table.add_row("Shortcuts", "Space pause · ↑↓ volume · ←→ seek · Ctrl+D quit")
 
     console.print(Panel(
-        "\n".join(lines),
+        table,
         border_style="dim",
         expand=False,
         padding=(0, 1),

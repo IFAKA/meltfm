@@ -45,9 +45,6 @@ from src.commands import (
 player = Player()
 manager = RadioManager()
 
-def _show_help():
-    print_help()
-
 
 async def main():
     print_header()
@@ -70,7 +67,7 @@ async def main():
         print_startup(radio)
         last_reaction = ""
 
-    _show_help()
+    print_help()
 
     last_params: Optional[dict] = None
     queued_track: Optional[Path] = None
@@ -149,15 +146,19 @@ async def main():
         user_input = ""
         first_play = False
         reaction = None
+        auto_advanced = False  # True when _auto_advance played next_path
 
         if not (player.is_playing() or player.is_paused()) and not queued_track:
-            console.print("  [dim]First track takes a moment to generate...[/dim]")
+            if last_params:
+                console.print("  [dim]Generating next track...[/dim]")
+            else:
+                console.print("  [dim]First track takes a moment to generate...[/dim]")
 
         if player.is_playing() or player.is_paused():
             # ── Inner input loop ──────────────────────────────────────
             while True:
                 async def _auto_advance():
-                    nonlocal interrupt_when_ready
+                    nonlocal interrupt_when_ready, queued_track, queued_params, auto_advanced
                     if interrupt_when_ready and not gen_task.done():
                         done_waiter = asyncio.create_task(player.wait_done_async())
                         gen_waiter = asyncio.create_task(asyncio.shield(gen_task))
@@ -177,6 +178,10 @@ async def main():
                                 player.stop()
                                 dur = get_audio_duration(next_path)
                                 player.play(next_path, duration=dur)
+                                queued_track = next_path
+                                queued_params = params
+                                auto_advanced = True
+                                print_now_playing(params, next_path)
                                 return
 
                     while True:
@@ -192,6 +197,10 @@ async def main():
                             if ok and next_path.exists():
                                 dur = get_audio_duration(next_path)
                                 player.play(next_path, duration=dur)
+                                queued_track = next_path
+                                queued_params = params
+                                auto_advanced = True
+                                print_now_playing(params, next_path)
                                 continue
                         if queued_track and queued_track.exists():
                             player.replay()
@@ -222,7 +231,7 @@ async def main():
 
                 # ── Info commands — handle and re-prompt ──────────────
                 if reaction["command"] == "help":
-                    _show_help()
+                    print_help()
                     continue
 
                 if reaction["command"] == "save":
@@ -361,6 +370,16 @@ async def main():
             recent_params = (recent_params + [params])[-5:]
             continue
 
+        # ── Auto-advance shortcut ─────────────────────────────────────────
+        # If auto_advance already played this track and user gave no input,
+        # just commit and continue to next iteration.
+        if auto_advanced and not user_input:
+            _commit_track()
+            # queued_track/queued_params already updated by _auto_advance
+            last_params = params
+            recent_params = (recent_params + [params])[-5:]
+            continue
+
         # ── 8. Handle empty input ─────────────────────────────────────────
         if not user_input:
             if player.is_playing():
@@ -424,7 +443,7 @@ async def main():
                     await gen_task
                 except (asyncio.CancelledError, Exception):
                     pass
-            if next_path.exists():
+            if not auto_advanced and next_path.exists():
                 next_path.unlink()
             last_params = queued_params or last_params
             recent_params = (recent_params + [queued_params or params])[-5:]
@@ -435,6 +454,7 @@ async def main():
             console.print("  [yellow]Skipped.[/yellow]")
 
         # ── 11. Update taste profile ──────────────────────────────────────
+        # Reactions always apply to queued_params (what the user was hearing)
         if reaction["signal"] and queued_params:
             radio.add_reaction(queued_params, reaction["signal"])
             if queued_track:
@@ -461,24 +481,43 @@ async def main():
         )
 
         if wants_change:
-            if not gen_task.done():
-                gen_task.cancel()
-                try:
-                    await gen_task
-                except (asyncio.CancelledError, Exception):
-                    pass
-            if next_path.exists():
-                next_path.unlink()
+            # Only cancel/delete the pre-generated track if auto_advance hasn't
+            # already started playing it (otherwise we'd delete the playing file).
+            if not auto_advanced:
+                if not gen_task.done():
+                    gen_task.cancel()
+                    try:
+                        await gen_task
+                    except (asyncio.CancelledError, Exception):
+                        pass
+                if next_path.exists():
+                    next_path.unlink()
+                interrupt_when_ready = True
+            else:
+                # Auto-advance already played next_path — let it keep playing.
+                # The next iteration will generate a fresh track with the changes.
+                interrupt_when_ready = False
+                _commit_track()
+
             console.print("  [dim]↻ Got it — regenerating with your changes...[/dim]")
-            interrupt_when_ready = True
             last_reaction = user_input
             last_params = queued_params or last_params
             recent_params = (recent_params + [queued_params or params])[-5:]
         else:
             interrupt_when_ready = False
             _commit_track()
-            queued_track = next_path
-            queued_params = params
+
+            # If user skipped and we auto-advanced (skipped next_path which is
+            # now queued_track), don't requeue it — let the next iteration
+            # generate fresh and go through the "nothing playing" path.
+            if reaction.get("signal") == "skipped" and auto_advanced:
+                queued_track = None
+                queued_params = None
+            elif not auto_advanced:
+                queued_track = next_path
+                queued_params = params
+            # else: auto_advanced already set queued_track/queued_params correctly
+
             has_music = bool(reaction["signal"] or reaction["modifiers"] or reaction["mood"] or reaction["direction"])
             if has_music:
                 if reaction["signal"] and not reaction["modifiers"] and not reaction["mood"] and reaction["direction"] != "reset":

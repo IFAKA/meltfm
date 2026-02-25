@@ -119,7 +119,9 @@ async def get_user_input(
             bar_len = 20
             filled = min(bar_len, int(el / dur * bar_len))
             bar = f"\033[32m{'━' * filled}\033[2m{'·' * (bar_len - filled)}\033[0m"
-            progress = f"  {fmt_time(el)}/{fmt_time(dur)} {bar}"
+            # Cap displayed elapsed so it doesn't exceed duration
+            shown_el = min(el, dur)
+            progress = f"  {fmt_time(shown_el)}/{fmt_time(dur)} {bar}"
         else:
             progress = ""
 

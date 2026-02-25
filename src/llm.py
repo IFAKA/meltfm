@@ -109,7 +109,9 @@ async def generate_params(
             raw = await _call_ollama(context + suffix)
             params = _parse_json(raw)
             if params:
-                return _validate_and_clamp(params)
+                params = _validate_and_clamp(params)
+                params = _inject_vocal_preference(params, user_message)
+                return params
         except Exception:
             pass
 
@@ -246,6 +248,48 @@ def _validate_and_clamp(params: dict) -> dict:
 
     # Remove old field if present
     params.pop("lyric_theme", None)
+
+    return params
+
+
+def _inject_vocal_preference(params: dict, user_message: str) -> dict:
+    """Detect vocal preference from user message and patch tags if LLM missed it.
+
+    Handles: "female singer", "male vocal", "female voice", "with vocals",
+    "rap", "spoken word", "instrumental", etc.
+    """
+    if not user_message:
+        return params
+
+    msg = user_message.lower()
+    vocal_pref = None
+
+    # Detect specific vocal preferences
+    if "female" in msg and any(w in msg for w in ["sing", "vocal", "voice", "singer"]):
+        vocal_pref = "female vocal"
+    elif "male" in msg and any(w in msg for w in ["sing", "vocal", "voice", "singer"]):
+        vocal_pref = "male vocal"
+    elif "female" in msg and "rap" in msg:
+        vocal_pref = "female rap"
+    elif "rap" in msg and ("male" in msg or "rapper" in msg):
+        vocal_pref = "male rap"
+    elif "spoken word" in msg:
+        vocal_pref = "spoken word"
+
+    if not vocal_pref:
+        return params
+
+    tags = params.get("tags", "")
+    # Already has the right vocal? Skip.
+    if vocal_pref in tags:
+        return params
+
+    # Replace any existing vocal tag with the preferred one
+    tag_list = [t.strip() for t in tags.split(",")]
+    tag_list = [t for t in tag_list if t not in VOCALS]
+    tag_list.append(vocal_pref)
+    params["tags"] = validate_and_order_tags(", ".join(tag_list))
+    params["instrumental"] = False
 
     return params
 
