@@ -69,9 +69,11 @@ async def try_start_acestep() -> bool:
     logger.info("Auto-starting ACE-Step...")
     env = os.environ.copy()
     env["ACESTEP_LM_BACKEND"] = "mlx"
+    env["ACESTEP_INIT_LLM"] = "true"
     env["TOKENIZERS_PARALLELISM"] = "false"
     subprocess.Popen(
-        [uv_path, "run", "acestep-api", "--host", "127.0.0.1", "--port", "8001"],
+        [uv_path, "run", "acestep-api", "--host", "127.0.0.1", "--port", "8001",
+         "--lm-model-path", "acestep-5Hz-lm-4B"],
         cwd=str(acestep_dir),
         env=env,
         stdout=subprocess.DEVNULL,
