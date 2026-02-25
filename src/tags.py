@@ -8,7 +8,13 @@ Sourced from:
 """
 import difflib
 import re
+import threading
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    import numpy as np
+    from sentence_transformers import SentenceTransformer
 
 # ── Whitelists (from Ace-Step_Data-Tool presets/moods.md) ─────────────────────
 
@@ -285,6 +291,63 @@ for _tag in MOODS:
 for _tag in GENRES:
     _ALL_TAGS[_tag] = "genre"
 
+# ── Semantic similarity index (lazy-loaded on first use) ─────────────────────
+
+_SEMANTIC_LOCK = threading.Lock()
+_semantic_model: "SentenceTransformer | None" = None
+_semantic_embeddings: "np.ndarray | None" = None
+_semantic_tags: list[str] = []
+_SEMANTIC_MODEL_NAME = "all-MiniLM-L6-v2"
+_SEMANTIC_THRESHOLD = 0.75  # cosine similarity cutoff (higher = fewer false antonym matches)
+
+
+def _get_semantic_index():
+    """Lazy-load model + pre-compute tag embeddings (once, thread-safe)."""
+    global _semantic_model, _semantic_embeddings, _semantic_tags
+    if _semantic_embeddings is not None:
+        return _semantic_model, _semantic_embeddings, _semantic_tags
+
+    with _SEMANTIC_LOCK:
+        if _semantic_embeddings is not None:
+            return _semantic_model, _semantic_embeddings, _semantic_tags
+        try:
+            import numpy as np
+            from sentence_transformers import SentenceTransformer
+            model = SentenceTransformer(_SEMANTIC_MODEL_NAME)
+            tags = list(_ALL_TAGS.keys())
+            embeddings = model.encode(tags, normalize_embeddings=True, show_progress_bar=False)
+            _semantic_model = model
+            _semantic_embeddings = np.array(embeddings)
+            _semantic_tags = tags
+        except Exception:
+            _semantic_model = None
+            _semantic_embeddings = None
+            _semantic_tags = []
+    return _semantic_model, _semantic_embeddings, _semantic_tags
+
+
+def _semantic_match(tag: str) -> tuple[str | None, str | None]:
+    """Find closest whitelisted tag by semantic similarity.
+
+    Handles variations like 'darker' → 'dark', 'more energetic' → 'energetic',
+    'melancholy' → 'melancholic' that fuzzy string matching misses.
+    """
+    model, embeddings, tags = _get_semantic_index()
+    if model is None or embeddings is None:
+        return None, None
+    try:
+        import numpy as np
+        tag_vec = model.encode([tag], normalize_embeddings=True, show_progress_bar=False)
+        scores = embeddings @ tag_vec[0]  # cosine similarity (embeddings already normalized)
+        best_idx = int(np.argmax(scores))
+        if scores[best_idx] >= _SEMANTIC_THRESHOLD:
+            matched = tags[best_idx]
+            return matched, _ALL_TAGS[matched]
+    except Exception:
+        pass
+    return None, None
+
+
 # Patterns to strip from tags (BPM/key/tempo/time sig don't belong in tags)
 _STRIP_PATTERNS = re.compile(
     r"\b\d+\s*bpm\b|\bbpm\b|\btempo\b|\bkey of\b|"
@@ -324,6 +387,24 @@ def normalize_tag(tag: str) -> tuple[str | None, str | None]:
     if tag in _ALL_TAGS:
         return tag, _ALL_TAGS[tag]
 
+    # Strip comparative/intensifier prefixes: "more X" → "X", "very X" → "X", etc.
+    _COMPARATIVE_PREFIXES = ("more ", "less ", "very ", "extra ", "super ", "ultra ", "so ")
+    stripped = tag
+    for prefix in _COMPARATIVE_PREFIXES:
+        if tag.startswith(prefix):
+            stripped = tag[len(prefix):]
+            break
+    # Strip comparative suffixes: "darker" → "dark", "heavier" → "heavy"
+    if stripped == tag and tag.endswith("er") and len(tag) > 4:
+        stripped = tag[:-2]  # "darker" → "dark"
+        if stripped not in _ALL_TAGS and tag.endswith("ier"):
+            stripped = tag[:-3] + "y"  # "heavier" → "heavy"
+    if stripped != tag:
+        if stripped in ALIASES:
+            stripped = ALIASES[stripped]
+        if stripped in _ALL_TAGS:
+            return stripped, _ALL_TAGS[stripped]
+
     # Fuzzy match (cutoff=0.88 from Data-Tool)
     candidates = list(_ALL_TAGS.keys())
     matches = difflib.get_close_matches(tag, candidates, n=1, cutoff=0.88)
@@ -331,7 +412,8 @@ def normalize_tag(tag: str) -> tuple[str | None, str | None]:
         matched = matches[0]
         return matched, _ALL_TAGS[matched]
 
-    return None, None
+    # Semantic similarity (handles 'darker'→'dark', 'more energetic'→'energetic', etc.)
+    return _semantic_match(tag)
 
 
 @dataclass
