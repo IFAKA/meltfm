@@ -19,6 +19,7 @@ from .player import Player, get_audio_duration
 from .errors import format_error
 from .utils import friendly_redirect
 from .commands import check_disk, update_recipe, append_metric
+from .acestep import check_server as acestep_check_server
 
 logger = logging.getLogger(__name__)
 
@@ -302,6 +303,12 @@ class RadioEngine:
             await self._reaction_event.wait()
             if not self._running:
                 return
+
+        # ── Check ACE-Step is up before burning LLM tokens ───────────────
+        if not await acestep_check_server():
+            await self.state.broadcast("error", {"message": "ACE-Step not available, retrying in 15s..."})
+            await asyncio.sleep(15)
+            return
 
         # ── Detect stuck LLM ────────────────────────────────────────────
         inject_vary = ""
@@ -636,6 +643,8 @@ class RadioEngine:
             if self.player.current_track:
                 self.player.replay()
                 await self._broadcast_playback_state()
+            # Back off before next cycle so we don't hammer ACE-Step while it's down
+            await asyncio.sleep(15)
             return
 
         # Retry succeeded
