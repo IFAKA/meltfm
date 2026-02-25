@@ -72,7 +72,20 @@ def print_startup(radio: Radio):
     ))
 
 
-def print_incoming(params: dict):
+def show_param_warnings(warnings: list[str]):
+    """Show compact yellow warnings about what was clamped/dropped/defaulted."""
+    if not warnings:
+        return
+    # Show at most 4 warnings to keep it compact
+    shown = warnings[:4]
+    remaining = len(warnings) - 4
+    lines = [f"  [yellow]⚠ {w}[/yellow]" for w in shown]
+    if remaining > 0:
+        lines.append(f"  [dim]+{remaining} more[/dim]")
+    console.print("\n".join(lines))
+
+
+def print_incoming(params: dict, last_params: Optional[dict] = None):
     """Show what's being built — compact preview of next track."""
     tags = params.get("tags", "")
     bpm = params.get("bpm", "?")
@@ -85,6 +98,22 @@ def print_incoming(params: dict):
     lines.append(f"  [dim]{bpm} BPM · {key} · {ts}/4 · {inst}[/dim]")
     if rationale:
         lines.append(f'  [italic dim]"{rationale}"[/italic dim]')
+
+    # Show before→after diff for changed fields
+    if last_params:
+        diffs: list[str] = []
+        for field, label in [("bpm", "BPM"), ("key_scale", "Key"), ("instrumental", "Mode")]:
+            old = last_params.get(field)
+            new = params.get(field)
+            if old is not None and new is not None and old != new:
+                if field == "instrumental":
+                    old_str = "instrumental" if old else "vocal"
+                    new_str = "instrumental" if new else "vocal"
+                else:
+                    old_str, new_str = str(old), str(new)
+                diffs.append(f"{label}: {old_str} → {new_str}")
+        if diffs:
+            lines.append(f"  [cyan]↳ {', '.join(diffs)}[/cyan]")
 
     console.print(Panel(
         "\n".join(lines),

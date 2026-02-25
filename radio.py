@@ -28,6 +28,7 @@ from src.ui import (
     print_recipe,
     print_help,
     show_reaction_feedback,
+    show_param_warnings,
     friendly_redirect,
     show_generation_progress,
     fmt_countdown,
@@ -116,10 +117,22 @@ async def main():
             inject_vary = " — vary significantly, change key, BPM range, and genre"
 
         # ── 2. Generate params (LLM) ─────────────────────────────────────
+        # Enrich LLM message with parsed reaction info for better context
+        llm_message = (last_reaction or "") + inject_vary
+        if last_reaction:
+            enrichment_reaction = parse_reaction(last_reaction)
+            enrich_parts: list[str] = []
+            if enrichment_reaction.get("modifiers"):
+                enrich_parts.append(f"modifiers: {', '.join(enrichment_reaction['modifiers'])}")
+            if enrichment_reaction.get("mood"):
+                enrich_parts.append(f"mood: {enrichment_reaction['mood']}")
+            if enrich_parts:
+                llm_message += f" [{'; '.join(enrich_parts)}]"
+
         try:
             with console.status("  [yellow]✦  Thinking...[/yellow]", spinner="dots"):
                 params = await generate_params(
-                    user_message=(last_reaction or "") + inject_vary,
+                    user_message=llm_message,
                     taste_context=radio.to_llm_context(),
                     last_params=last_params,
                     recent_params=recent_params,
@@ -135,7 +148,11 @@ async def main():
         params["generated_at"] = datetime.now().isoformat()
         params["prompt"] = last_reaction[:120] if last_reaction else params.get("tags", "")
 
-        print_incoming(params)
+        # Show transparency warnings (clamped BPM, dropped tags, etc.)
+        warnings = params.pop("_warnings", [])
+        if warnings:
+            show_param_warnings(warnings)
+        print_incoming(params, last_params=last_params)
 
         # ── 3. Start ACE-Step generation in background ────────────────────
         slug = _slugify(params.get("tags", "track"))[:40]

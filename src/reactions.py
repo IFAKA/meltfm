@@ -157,6 +157,9 @@ def parse_reaction(text: str) -> dict:
         r"\bremove\s+([\w ]{2,25}?)(?=\s*(?:and|,|$))",
         r"\bno\s+([\w ]{2,25}?)(?=\s*(?:and|,|$))",
         r"\b(faster|slower|louder|quieter|harder|softer|heavier|lighter|darker|brighter|rawer|smoother)\b",
+        r"\bturn\s+up\s+(?:the\s+)?([\w ]{2,25}?)(?=\s*(?:and|,|$))",     # "turn up the bass"
+        r"\bturn\s+down\s+(?:the\s+)?([\w ]{2,25}?)(?=\s*(?:and|,|$))",   # "turn down the vocals"
+        r"\bmake\s+it\s+(?:sound\s+)?([\w ]{2,25}?)(?=\s*(?:and|,|$))",   # "make it sound darker"
     ]
     seen: set = set()
     for pat in modifier_patterns:
@@ -166,16 +169,26 @@ def parse_reaction(text: str) -> dict:
                 seen.add(mod)
                 result["modifiers"].append(mod)
 
+    # Natural phrasing normalization
+    _phrase_map = {
+        r"\bspeed\s*(?:it\s+)?up\b": "faster",
+        r"\bslow\s*(?:it\s+)?down\b": "slower",
+    }
+    for pat, replacement in _phrase_map.items():
+        if re.search(pat, t) and replacement not in seen:
+            seen.add(replacement)
+            result["modifiers"].append(replacement)
+
     # ── Mood ──────────────────────────────────────────────────────────────────
 
     mood_map = {
         "focus":  r"\bfocus\b|\bwork\b|\bconcentrate\b|\bstudy\b",
-        "energy": r"\benergy\b|\bpump\b|\bworkout\b|\bhype\b|\bfull energy\b",
+        "energy": r"\benergy\b|\bpump\b|\bworkout\b|\bhype\b|\bfull energy\b|\bintense\b",
         "chill":  r"\bchill\b|\brelax\b|\bsoothe\b|\beasy\b|\bmellow\b",
-        "sad":    r"\bsad\b|\bmelancholy\b|\bdepressing\b|\bheavy\b|\bemotion\b",
+        "sad":    r"\bsad\b|\bmelancholy\b|\bdepressing\b|\bemotion\b",
         "happy":  r"\bhappy\b|\bjoyful\b|\buplifting\b|\bupbeat\b",
         "sleep":  r"\bsleep\b|\bdream\b|\bnight\b",
-        "party":  r"\bparty\b|\bdance\b|\bclub\b|\brave\b",
+        "party":  r"\bparty\b|\bclub\b|\brave\b",
     }
     for mood, pat in mood_map.items():
         if re.search(pat, t):

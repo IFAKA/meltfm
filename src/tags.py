@@ -8,6 +8,7 @@ Sourced from:
 """
 import difflib
 import re
+from dataclasses import dataclass, field
 
 # ── Whitelists (from Ace-Step_Data-Tool presets/moods.md) ─────────────────────
 
@@ -333,6 +334,15 @@ def normalize_tag(tag: str) -> tuple[str | None, str | None]:
     return None, None
 
 
+@dataclass
+class TagResult:
+    """Result of tag validation with transparency info."""
+    tags: str
+    dropped: list[tuple[str, str]] = field(default_factory=list)      # (original, reason)
+    fuzzy_matched: list[tuple[str, str]] = field(default_factory=list) # (original, matched_to)
+    truncated: list[tuple[str, str]] = field(default_factory=list)     # (tag, category) — over limit
+
+
 def categorize_tags(raw_tags: str) -> dict[str, list[str]]:
     """Split comma-separated tags and categorize each one."""
     result: dict[str, list[str]] = {cat: [] for cat in TAG_ORDER}
@@ -346,6 +356,35 @@ def categorize_tags(raw_tags: str) -> dict[str, list[str]]:
                 result[category].append(normalized)
 
     return result
+
+
+def _categorize_tags_detailed(raw_tags: str) -> tuple[dict[str, list[str]], list[tuple[str, str]], list[tuple[str, str]]]:
+    """Like categorize_tags but also returns drop/fuzzy info."""
+    result: dict[str, list[str]] = {cat: [] for cat in TAG_ORDER}
+    seen: set[str] = set()
+    dropped: list[tuple[str, str]] = []
+    fuzzy_matched: list[tuple[str, str]] = []
+
+    for raw in raw_tags.split(","):
+        raw_stripped = raw.strip()
+        if not raw_stripped:
+            continue
+        normalized, category = normalize_tag(raw_stripped)
+        if normalized is None:
+            dropped.append((raw_stripped, "not in whitelist"))
+            continue
+        if normalized != raw_stripped.strip().lower().replace("\u2018", "'").replace("\u2019", "'"):
+            # Was fuzzy-matched or aliased
+            clean = re.sub(r"\s+", " ", raw_stripped.strip().lower())
+            if clean != normalized and clean not in ALIASES:
+                fuzzy_matched.append((raw_stripped, normalized))
+        if normalized in seen:
+            continue
+        seen.add(normalized)
+        if category in result:
+            result[category].append(normalized)
+
+    return result, dropped, fuzzy_matched
 
 
 def resolve_conflicts(tags_by_category: dict[str, list[str]]) -> dict[str, list[str]]:
@@ -386,18 +425,20 @@ def resolve_conflicts(tags_by_category: dict[str, list[str]]) -> dict[str, list[
     return tags_by_category
 
 
-def validate_and_order_tags(raw_tags: str) -> str:
-    """Full pipeline: split → normalize → categorize → resolve conflicts → enforce limits → order → rejoin.
-
-    Adapted from Data-Tool tag_processor.py process_tags().
-    """
-    by_cat = categorize_tags(raw_tags)
+def validate_and_order_tags_detailed(raw_tags: str) -> TagResult:
+    """Full pipeline with transparency: returns TagResult with drop/fuzzy/truncation info."""
+    by_cat, dropped, fuzzy_matched = _categorize_tags_detailed(raw_tags)
     by_cat = resolve_conflicts(by_cat)
+
+    truncated: list[tuple[str, str]] = []
 
     # Enforce per-category max limits
     for cat in TAG_ORDER:
         _, max_count = CATEGORY_LIMITS[cat]
-        by_cat[cat] = by_cat[cat][:max_count]
+        if len(by_cat[cat]) > max_count:
+            for tag in by_cat[cat][max_count:]:
+                truncated.append((tag, f"{cat} limit ({max_count})"))
+            by_cat[cat] = by_cat[cat][:max_count]
 
     # Assemble in order
     ordered: list[str] = []
@@ -405,9 +446,15 @@ def validate_and_order_tags(raw_tags: str) -> str:
         ordered.extend(by_cat[cat])
 
     # Enforce total limit
-    ordered = ordered[:MAX_TOTAL_TAGS]
+    if len(ordered) > MAX_TOTAL_TAGS:
+        for tag in ordered[MAX_TOTAL_TAGS:]:
+            truncated.append((tag, f"total limit ({MAX_TOTAL_TAGS})"))
+        ordered = ordered[:MAX_TOTAL_TAGS]
 
-    if not ordered:
-        return "atmospheric, experimental"
+    tags_str = ", ".join(ordered) if ordered else "atmospheric, experimental"
+    return TagResult(tags=tags_str, dropped=dropped, fuzzy_matched=fuzzy_matched, truncated=truncated)
 
-    return ", ".join(ordered)
+
+def validate_and_order_tags(raw_tags: str) -> str:
+    """Full pipeline: split → normalize → categorize → resolve conflicts → enforce limits → order → rejoin."""
+    return validate_and_order_tags_detailed(raw_tags).tags

@@ -25,7 +25,9 @@ from .config import (
 )
 from .tags import (
     validate_and_order_tags,
+    validate_and_order_tags_detailed,
     GENRES, MOODS, INSTRUMENTS, VOCALS, VOCAL_FX, RAP_STYLES, TEXTURES,
+    _GENRE_SET, _INSTRUMENT_SET,
 )
 
 _SYSTEM_PROMPT = """\
@@ -141,8 +143,10 @@ async def generate_params(
         except Exception:
             pass
 
-    # Fallback: keyword extraction
-    return _keyword_fallback(user_message)
+    # Fallback: keyword extraction (use last_params as base instead of hardcoded defaults)
+    result = _keyword_fallback(user_message, last_params=last_params)
+    result = _inject_vocal_preference(result, user_message)
+    return result
 
 
 def _build_context(
@@ -155,10 +159,17 @@ def _build_context(
 
     if last_params:
         parts.append("\n=== LAST TRACK ===")
-        parts.append(json.dumps({
+        last_info = {
             k: last_params[k] for k in ["tags", "bpm", "key_scale", "instrumental", "rationale"]
             if k in last_params
-        }, indent=2))
+        }
+        # Extract vocal type from tags for explicit visibility
+        if last_params.get("tags"):
+            for v in VOCALS:
+                if v in last_params["tags"]:
+                    last_info["vocal_type"] = v
+                    break
+        parts.append(json.dumps(last_info, indent=2))
 
     if recent_params and len(recent_params) > 1:
         parts.append("\n=== RECENT TRACK PATTERNS (avoid repeating) ===")
@@ -218,31 +229,52 @@ def _parse_json(raw: str) -> Optional[dict]:
 
 
 def _validate_and_clamp(params: dict) -> dict:
-    """Ensure all fields are valid. Clamp out-of-range values. Normalize tags."""
+    """Ensure all fields are valid. Clamp out-of-range values. Normalize tags.
+    Attaches params["_warnings"] with transparency info (stripped before recipe write).
+    """
+    warnings: list[str] = []
+
     # BPM — clamp to ACE-Step range
     try:
         bpm = int(params.get("bpm", 120))
-        params["bpm"] = max(BPM_MIN, min(BPM_MAX, bpm))
+        clamped = max(BPM_MIN, min(BPM_MAX, bpm))
+        if clamped != bpm:
+            warnings.append(f"BPM {bpm} → {clamped} (clamped to {BPM_MIN}-{BPM_MAX})")
+        params["bpm"] = clamped
     except (TypeError, ValueError):
+        warnings.append(f"BPM invalid → defaulted to 120")
         params["bpm"] = 120
 
     # Time signature
     try:
         ts = int(params.get("time_signature", 4))
-        params["time_signature"] = ts if ts in VALID_TIME_SIGS else 4
+        if ts not in VALID_TIME_SIGS:
+            warnings.append(f"Time sig {ts} → 4 (not in {VALID_TIME_SIGS})")
+            ts = 4
+        params["time_signature"] = ts
     except (TypeError, ValueError):
         params["time_signature"] = 4
 
     # Key/scale — accept if it looks like "<note> <Major|Minor>"
     ks = params.get("key_scale", "")
     if not isinstance(ks, str) or not re.match(r"^[A-G][b#]?\s+(Major|Minor)$", ks.strip()):
+        if ks:
+            warnings.append(f"Key '{ks}' → A Minor (invalid format)")
         params["key_scale"] = "A Minor"
 
-    # Tags — normalize and validate through whitelist pipeline
+    # Tags — normalize and validate through whitelist pipeline (with transparency)
     raw_tags = params.get("tags", "")
     if isinstance(raw_tags, str) and raw_tags.strip():
-        params["tags"] = validate_and_order_tags(raw_tags)
+        tag_result = validate_and_order_tags_detailed(raw_tags)
+        params["tags"] = tag_result.tags
+        for orig, reason in tag_result.dropped:
+            warnings.append(f"Tag '{orig}' dropped ({reason})")
+        for orig, matched in tag_result.fuzzy_matched:
+            warnings.append(f"Tag '{orig}' → '{matched}' (fuzzy)")
+        for tag, reason in tag_result.truncated:
+            warnings.append(f"Tag '{tag}' truncated ({reason})")
     else:
+        warnings.append("No tags → defaulted to 'atmospheric, experimental'")
         params["tags"] = "atmospheric, experimental"
 
     # Instrumental
@@ -270,19 +302,46 @@ def _validate_and_clamp(params: dict) -> dict:
         if isinstance(lyrics, str) and lyrics.strip():
             params["lyrics"] = lyrics.strip()[:1000]
         else:
+            warnings.append("No lyrics → defaulted to placeholder")
             params["lyrics"] = "[Verse 1]\nla la la\n\n[Chorus]\nla la la"
 
     # Remove old field if present
     params.pop("lyric_theme", None)
 
+    if warnings:
+        params["_warnings"] = warnings
+
     return params
+
+
+_VOCAL_PATTERNS: list[tuple[re.Pattern, str]] = [
+    # Instrumental detection (check first — "no singing" should override vocal matches)
+    (re.compile(r"\bno\s+(?:singing|vocals?|voice)\b", re.I), "instrumental"),
+    (re.compile(r"\bwithout\s+(?:singing|vocals?|voice)\b", re.I), "instrumental"),
+    (re.compile(r"\binstrumental\s+only\b", re.I), "instrumental"),
+    # Female vocal
+    (re.compile(r"\bwom[ae]n?\s+sing", re.I), "female vocal"),
+    (re.compile(r"\bgirl\s+(?:sing|vocal|voice)", re.I), "female vocal"),
+    (re.compile(r"\bfemale\s+(?:sing|vocal|voice|singer)", re.I), "female vocal"),
+    # Male vocal
+    (re.compile(r"\bguy\s+(?:sing|vocal|voice)", re.I), "male vocal"),
+    (re.compile(r"\bmale\s+(?:sing|vocal|voice|singer)", re.I), "male vocal"),
+    (re.compile(r"\bman\s+sing", re.I), "male vocal"),
+    # Rap
+    (re.compile(r"\bfemale\s+rap", re.I), "female rap"),
+    (re.compile(r"\bgive\s+me\s+a\s+rapper\b", re.I), "male rap"),
+    (re.compile(r"\b(?:male\s+)?rapper\b", re.I), "male rap"),
+    (re.compile(r"\bmale\s+rap\b", re.I), "male rap"),
+    # Spoken word
+    (re.compile(r"\bspoken\s+word\b", re.I), "spoken word"),
+]
 
 
 def _inject_vocal_preference(params: dict, user_message: str) -> dict:
     """Detect vocal preference from user message and patch tags if LLM missed it.
 
-    Handles: "female singer", "male vocal", "female voice", "with vocals",
-    "rap", "spoken word", "instrumental", etc.
+    Uses regex patterns to catch natural phrasing like "woman singing jazz",
+    "give me a rapper", "no vocals", "instrumental only", etc.
     """
     if not user_message:
         return params
@@ -290,17 +349,11 @@ def _inject_vocal_preference(params: dict, user_message: str) -> dict:
     msg = user_message.lower()
     vocal_pref = None
 
-    # Detect specific vocal preferences
-    if "female" in msg and any(w in msg for w in ["sing", "vocal", "voice", "singer"]):
-        vocal_pref = "female vocal"
-    elif "male" in msg and any(w in msg for w in ["sing", "vocal", "voice", "singer"]):
-        vocal_pref = "male vocal"
-    elif "female" in msg and "rap" in msg:
-        vocal_pref = "female rap"
-    elif "rap" in msg and ("male" in msg or "rapper" in msg):
-        vocal_pref = "male rap"
-    elif "spoken word" in msg:
-        vocal_pref = "spoken word"
+    # Match against pattern list (first match wins)
+    for pattern, vocal_type in _VOCAL_PATTERNS:
+        if pattern.search(msg):
+            vocal_pref = vocal_type
+            break
 
     if not vocal_pref:
         return params
@@ -339,9 +392,35 @@ def _word_boundary_match(term: str, text: str) -> bool:
     return bool(re.search(pattern, text))
 
 
-def _keyword_fallback(user_message: str) -> dict:
+_FALLBACK_LYRICS = {
+    "chill": (
+        "[Verse 1 - smooth]\nDrifting through the evening air\n"
+        "Nothing but the sound of rain\n\n"
+        "[Chorus]\nLet it wash away\nLet it all just fade"
+    ),
+    "energy": (
+        "[Verse 1 - powerful]\nFeel the fire burning bright\n"
+        "Every step we take ignites\n\n"
+        "[Chorus - anthemic]\nWe don't stop we rise\nHigher every time"
+    ),
+    "sad": (
+        "[Verse 1 - gentle]\nEmpty rooms and fading light\n"
+        "Echoes of a different time\n\n"
+        "[Chorus]\nWhere did all the colors go\nI still see them in the snow"
+    ),
+    "default": (
+        "[Verse 1]\nWalking down an open road\n"
+        "Carrying an easy load\n\n"
+        "[Chorus]\nLa la la la la\nLa la la la la"
+    ),
+}
+
+
+def _keyword_fallback(user_message: str, last_params: Optional[dict] = None) -> dict:
     """Safe defaults extracted from keywords in the user's message.
-    Uses tags.py whitelists for matching, runs result through validate_and_order_tags."""
+    Uses tags.py whitelists for matching, runs result through validate_and_order_tags.
+    When last_params is available, uses it as a starting point instead of hardcoded defaults.
+    """
     msg = user_message.lower()
     found_genres: list[str] = []
     found_moods: list[str] = []
@@ -409,11 +488,26 @@ def _keyword_fallback(user_message: str) -> dict:
                 found_instruments = instruments[:3]
                 break
 
-    # Defaults if nothing matched
+    # Use last_params as base when nothing was matched from the message
+    base_bpm = last_params.get("bpm", 110) if last_params else 110
+    base_key = last_params.get("key_scale", "A Minor") if last_params else "A Minor"
+
+    if not found_genres and last_params and last_params.get("tags"):
+        # Extract genres from last track's tags as fallback
+        last_tags = [t.strip() for t in last_params["tags"].split(",")]
+        last_genres = [t for t in last_tags if t in _GENRE_SET]
+        if last_genres:
+            found_genres = last_genres[:2]
     if not found_genres:
         found_genres = ["atmospheric"]
+
     if not found_moods:
         found_moods = ["experimental"]
+    if not found_instruments and last_params and last_params.get("tags"):
+        last_tags = [t.strip() for t in last_params["tags"].split(",")]
+        last_instruments = [t for t in last_tags if t in _INSTRUMENT_SET]
+        if last_instruments:
+            found_instruments = last_instruments[:3]
     if not found_instruments:
         found_instruments = ["synth pad", "drums"]
 
@@ -423,25 +517,30 @@ def _keyword_fallback(user_message: str) -> dict:
     raw_tags = ", ".join(tags_parts)
     tags = validate_and_order_tags(raw_tags)
 
-    # BPM heuristic
-    bpm = 110
+    # BPM: relative adjustments from base instead of fixed values
+    bpm = base_bpm
     if any(w in msg for w in ["slow", "chill", "relax", "ambient", "mellow", "sleep", "dream"]):
-        bpm = 80
+        bpm = max(BPM_MIN, base_bpm - 30)
     elif any(w in msg for w in ["fast", "energy", "pump", "hype", "dance", "party", "trap"]):
-        bpm = 140
+        bpm = min(BPM_MAX, base_bpm + 30)
 
     is_instrumental = found_vocal == "instrumental"
 
-    # Basic lyrics for vocal tracks
+    # Select mood-appropriate lyrics for vocal tracks
     lyrics = "[inst]"
     if not is_instrumental:
-        lyrics = "[Verse 1]\nla la la\n\n[Chorus]\nla la la"
+        detected_mood = "default"
+        for mood_key in ("chill", "energy", "sad"):
+            if mood_key in msg:
+                detected_mood = mood_key
+                break
+        lyrics = _FALLBACK_LYRICS.get(detected_mood, _FALLBACK_LYRICS["default"])
 
     return {
         "tags": tags,
         "lyrics": lyrics,
         "bpm": bpm,
-        "key_scale": "A Minor",
+        "key_scale": base_key,
         "time_signature": 4,
         "vocal_language": "en",
         "instrumental": is_instrumental,
