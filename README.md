@@ -1,5 +1,9 @@
 # meltfm
 
+```
+  ▁ ▂ ▁ ▃ ▅ ▇ █ ▇ ▅ ▃ ▁ ▂ ▅ ▇ █ ▅ ▃ ▂ ▁
+```
+
 Local AI radio that generates music continuously using ACE-Step + Ollama, shaped by your taste in plain language.
 
 ## How it works
