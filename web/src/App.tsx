@@ -6,6 +6,7 @@ import Controls from "./components/Controls";
 import ReactionInput from "./components/ReactionInput";
 import GenerationBadge from "./components/GenerationBadge";
 import History from "./components/History";
+import EventLog from "./components/EventLog";
 import RadioDropdown from "./components/RadioDropdown";
 import ShareOverlay from "./components/ShareOverlay";
 import CleanDataDialog from "./components/CleanDataDialog";
@@ -71,6 +72,7 @@ export default function App() {
             generating={state.generating}
             elapsed={state.generationElapsed}
             params={state.generationParams}
+            pipeline={state.pipeline}
           />
 
           <div className="border-t border-neutral-800 mx-6" />
@@ -78,6 +80,11 @@ export default function App() {
           {/* History: inline on mobile, hidden on desktop (shown in right panel) */}
           <div className="md:hidden">
             <History radioName={state.radioName} />
+          </div>
+
+          {/* Event log: inline on mobile (collapsed by default), hidden on desktop */}
+          <div className="md:hidden">
+            <EventLog events={state.events} defaultCollapsed />
           </div>
         </div>
 
@@ -102,9 +109,10 @@ export default function App() {
 
       {/* ── Right panel — desktop only ── */}
       <div className="hidden md:flex md:flex-col border-l border-neutral-800 overflow-hidden">
-        <div className="flex-1 min-h-0">
+        <div className="flex-1 min-h-0 overflow-y-auto">
           <History radioName={state.radioName} />
         </div>
+        <EventLog events={state.events} />
       </div>
 
       {/* Overlays */}

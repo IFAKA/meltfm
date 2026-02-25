@@ -20,6 +20,24 @@ export type NowPlaying = {
   radio: string;
 };
 
+/** Which phase of the generation pipeline is active. */
+export type PipelineStage = "idle" | "thinking" | "generating" | "error";
+
+export type PipelineState = {
+  stage: PipelineStage;
+  llmDone: boolean;       // LLM params received (ACE-Step may still be running)
+  warnings: string[];     // warnings from last LLM call
+  lastError: string | null;
+};
+
+export type EventEntry = {
+  id: number;
+  ts: number;   // Date.now()
+  type: string;
+  summary: string;
+  level: "info" | "warn" | "error";
+};
+
 export type RadioState = {
   connected: boolean;
   radioName: string;
@@ -33,6 +51,8 @@ export type RadioState = {
   generationElapsed: number;
   generationParams: Record<string, unknown> | null;
   error: string | null;
+  pipeline: PipelineState;
+  events: EventEntry[];
 };
 
 export function useRadio() {
@@ -49,6 +69,8 @@ export function useRadio() {
     generationElapsed: 0,
     generationParams: null,
     error: null,
+    pipeline: { stage: "idle", llmDone: false, warnings: [], lastError: null },
+    events: [],
   });
 
   const socketRef = useRef<RadioSocket | null>(null);
@@ -57,6 +79,7 @@ export function useRadio() {
   // Refs to avoid stale closures in start()
   const nowPlayingRef = useRef<NowPlaying | null>(null);
   const serverElapsedRef = useRef(0);
+  const eventIdRef = useRef(0);
 
   const showToast = useCallback((msg: string) => {
     toast(msg);
@@ -87,6 +110,18 @@ export function useRadio() {
       });
     };
 
+    /** Create a typed event log entry (id incremented outside setState to avoid double-fire). */
+    const mkEvent = (type: string, summary: string, level: EventEntry["level"]): EventEntry => ({
+      id: ++eventIdRef.current,
+      ts: Date.now(),
+      type,
+      summary,
+      level,
+    });
+
+    const pushEvent = (e: EventEntry) =>
+      setState((s) => ({ ...s, events: [e, ...s.events].slice(0, 60) }));
+
     const socket = new RadioSocket({
       onMessage: (msg) => {
         switch (msg.type) {
@@ -109,9 +144,17 @@ export function useRadio() {
             }
             break;
 
-          case "now_playing":
-            nowPlayingRef.current = msg.data;
-            setState((s) => ({ ...s, nowPlaying: msg.data }));
+          case "now_playing": {
+            const np = msg.data as NowPlaying;
+            const tag0 = np.tags?.split(",")[0]?.trim() ?? "track";
+            const npEvt = mkEvent("now_playing", `▶ ${tag0}${np.bpm ? " · " + np.bpm + " BPM" : ""}`, "info");
+            nowPlayingRef.current = np;
+            setState((s) => ({
+              ...s,
+              nowPlaying: np,
+              pipeline: { ...s.pipeline, stage: "idle", llmDone: false },
+              events: [npEvt, ...s.events].slice(0, 60),
+            }));
             if (started.current && msg.data.audio_url) {
               const audio = audioRef.current;
               if (audio?.hasSource && !audio.paused) {
@@ -122,6 +165,7 @@ export function useRadio() {
               setupMedia(msg.data);
             }
             break;
+          }
 
           case "playback_state":
             // Only sync volume — play/pause state is owned by audio element
@@ -132,64 +176,122 @@ export function useRadio() {
             serverElapsedRef.current = msg.data.elapsed;
             break;
 
-          case "generation_start":
+          case "thinking": {
+            const evt = mkEvent("thinking", "LLM thinking…", "info");
+            setState((s) => ({
+              ...s,
+              generating: true,
+              generationElapsed: 0,
+              pipeline: { stage: "thinking", llmDone: false, warnings: [], lastError: null },
+              events: [evt, ...s.events].slice(0, 60),
+            }));
+            break;
+          }
+
+          case "generation_start": {
+            const p = msg.data.params as Record<string, unknown>;
+            const tag0 = typeof p?.tags === "string" ? p.tags.split(",")[0]?.trim() : "?";
+            const bpmStr = typeof p?.bpm === "number" ? `${p.bpm} BPM` : "";
+            const warnings: string[] = Array.isArray(msg.data.warnings) ? msg.data.warnings : [];
+            const level: EventEntry["level"] = warnings.length > 0 ? "warn" : "info";
+            const evt = mkEvent("generation_start", `ACE-Step: ${tag0}${bpmStr ? " · " + bpmStr : ""}`, level);
             setState((s) => ({
               ...s,
               generating: true,
               generationElapsed: 0,
               generationParams: msg.data.params,
+              pipeline: { stage: "generating", llmDone: true, warnings, lastError: null },
+              events: [evt, ...s.events].slice(0, 60),
             }));
             break;
+          }
 
           case "generation_progress":
             setState((s) => ({ ...s, generationElapsed: msg.data.elapsed }));
             break;
 
-          case "generation_done":
-            setState((s) => ({ ...s, generating: false, generationElapsed: 0, generationParams: null }));
+          case "generation_done": {
+            const evt = mkEvent("generation_done", "Track ready", "info");
+            setState((s) => ({
+              ...s,
+              generating: false,
+              generationElapsed: 0,
+              generationParams: null,
+              pipeline: { ...s.pipeline, stage: "idle" },
+              events: [evt, ...s.events].slice(0, 60),
+            }));
             break;
+          }
 
-          case "regenerating":
-            setState((s) => ({ ...s, generating: true, generationElapsed: 0, generationParams: null }));
+          case "regenerating": {
+            const evt = mkEvent("regenerating", `Regenerating: "${msg.data.reason}"`, "warn");
+            setState((s) => ({
+              ...s,
+              generating: true,
+              generationElapsed: 0,
+              generationParams: null,
+              pipeline: { stage: "thinking", llmDone: false, warnings: [], lastError: null },
+              events: [evt, ...s.events].slice(0, 60),
+            }));
             showToast("Got it — regenerating...");
             break;
-
-          case "thinking":
-            setState((s) => ({ ...s, generating: true, generationElapsed: 0 }));
-            break;
+          }
 
           case "toast":
             showToast(msg.data.message);
             break;
 
-          case "error":
-            setState((s) => ({ ...s, error: msg.data.message }));
+          case "error": {
+            const errMsg: string = msg.data.message;
+            const evt = mkEvent("error", errMsg, "error");
+            setState((s) => ({
+              ...s,
+              error: errMsg,
+              pipeline: { ...s.pipeline, stage: "error", lastError: errMsg },
+              events: [evt, ...s.events].slice(0, 60),
+            }));
             setTimeout(() => setState((s) => ({ ...s, error: null })), 5000);
             break;
+          }
 
-          case "radio_switched":
+          case "radio_switched": {
+            const evt = mkEvent("radio_switched", `Switched to: ${msg.data.name}`, "info");
             setState((s) => ({
               ...s,
               radioName: msg.data.name,
               isFirstRun: msg.data.is_new,
               nowPlaying: null,
               generating: false,
+              pipeline: { stage: "idle", llmDone: false, warnings: [], lastError: null },
+              events: [evt, ...s.events].slice(0, 60),
             }));
             break;
+          }
 
           case "first_run":
             setState((s) => ({ ...s, isFirstRun: true }));
             break;
 
-          case "reaction_feedback":
-            if (msg.data.signal === "liked") showToast("Liked!");
-            else if (msg.data.signal === "disliked") showToast("Disliked — changing direction...");
-            else if (msg.data.signal === "skipped") showToast("Skipped");
+          case "reaction_feedback": {
+            const sig = msg.data.signal;
+            if (sig === "liked") {
+              showToast("Liked!");
+              pushEvent(mkEvent("reaction_feedback", "♥ Liked", "info"));
+            } else if (sig === "disliked") {
+              showToast("Disliked — changing direction...");
+              pushEvent(mkEvent("reaction_feedback", "✕ Disliked", "warn"));
+            } else if (sig === "skipped") {
+              showToast("Skipped");
+              pushEvent(mkEvent("reaction_feedback", "» Skipped", "info"));
+            }
             break;
+          }
 
-          case "disk_full":
+          case "disk_full": {
             showToast(`Storage full (${msg.data.free_mb}MB left)`);
+            pushEvent(mkEvent("disk_full", `Disk full (${msg.data.free_mb}MB free)`, "error"));
             break;
+          }
 
           case "sleep_expired":
             audioRef.current?.pause();
