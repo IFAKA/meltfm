@@ -156,8 +156,8 @@ async def main():
 
         if player.is_playing() or player.is_paused():
             # ── Inner input loop ──────────────────────────────────────
-            input_break = asyncio.Event()
             while True:
+                input_break = asyncio.Event()
                 async def _auto_advance():
                     nonlocal interrupt_when_ready, queued_track, queued_params, auto_advanced
                     if interrupt_when_ready and not gen_task.done():
@@ -173,6 +173,8 @@ async def main():
                             try:
                                 ok, _ = gen_task.result()
                             except Exception:
+                                # Generation failed — let main loop handle retry
+                                input_break.set()
                                 return
                             if ok and next_path.exists():
                                 interrupt_when_ready = False
@@ -188,6 +190,10 @@ async def main():
 
                     while True:
                         await player.wait_done_async()
+                        # After waking, verify track actually ended —
+                        # seek/volume changes set the event but keep playing.
+                        if player.is_playing():
+                            continue
                         if player.is_paused():
                             await asyncio.sleep(0.3)
                             continue
@@ -195,6 +201,8 @@ async def main():
                             try:
                                 ok, _ = gen_task.result()
                             except Exception:
+                                # Generation raised — signal main loop to retry
+                                input_break.set()
                                 break
                             if ok and next_path.exists():
                                 dur = get_audio_duration(next_path)
@@ -205,6 +213,9 @@ async def main():
                                 print_now_playing(params, next_path)
                                 input_break.set()
                                 continue
+                            # Generation returned failure — signal main loop to retry
+                            input_break.set()
+                            break
                         if queued_track and queued_track.exists():
                             player.replay()
 
@@ -221,10 +232,7 @@ async def main():
                 advance_watcher.cancel()
 
                 if not user_input:
-                    if player.is_playing():
-                        break
-                    console.print("  [dim]Tell me how you're feeling or what to change...[/dim]")
-                    continue
+                    break
 
                 if friendly_redirect(user_input):
                     console.print("  [dim]I only speak music — try 'more bass' or 'something darker' :)[/dim]")

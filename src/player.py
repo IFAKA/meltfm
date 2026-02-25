@@ -217,6 +217,9 @@ class Player:
                 self._proc.kill()
         if self._watcher_task and not self._watcher_task.done():
             self._watcher_task.cancel()
+        # Wake any coroutines awaiting the old event (e.g. _auto_advance)
+        # so they can re-check player state instead of hanging forever.
+        self._done_event.set()
 
         # Start playing from temp file
         self._proc = subprocess.Popen(
