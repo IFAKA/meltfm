@@ -1,7 +1,9 @@
 /**
  * useRadio — main hook connecting WebSocket state + audio playback.
+ * isPlaying is always driven by the actual audio element, never server state.
  */
 import { useCallback, useEffect, useRef, useState } from "react";
+import { toast } from "sonner";
 import { RadioSocket } from "../lib/ws";
 import { AudioManager } from "../lib/audio";
 
@@ -18,38 +20,19 @@ export type NowPlaying = {
   radio: string;
 };
 
-export type PlaybackState = {
-  playing: boolean;
-  paused: boolean;
-  elapsed: number;
-  duration: number | null;
-  volume: number;
-  has_track: boolean;
-};
-
 export type RadioState = {
   connected: boolean;
   radioName: string;
   isFirstRun: boolean;
   nowPlaying: NowPlaying | null;
-  playback: PlaybackState;
+  isPlaying: boolean;   // actual audio element state — always accurate
+  elapsed: number;      // local audio time
+  duration: number;     // local audio duration
+  volume: number;
   generating: boolean;
   generationElapsed: number;
-  generationParams: Record<string, any> | null;
-  toast: string | null;
+  generationParams: Record<string, unknown> | null;
   error: string | null;
-  // Local audio state (more accurate than server ticks)
-  localElapsed: number;
-  localDuration: number;
-};
-
-const DEFAULT_PLAYBACK: PlaybackState = {
-  playing: false,
-  paused: false,
-  elapsed: 0,
-  duration: null,
-  volume: 80,
-  has_track: false,
 };
 
 export function useRadio() {
@@ -58,43 +41,32 @@ export function useRadio() {
     radioName: "default",
     isFirstRun: true,
     nowPlaying: null,
-    playback: DEFAULT_PLAYBACK,
+    isPlaying: false,
+    elapsed: 0,
+    duration: 0,
+    volume: 80,
     generating: false,
     generationElapsed: 0,
     generationParams: null,
-    toast: null,
     error: null,
-    localElapsed: 0,
-    localDuration: 0,
   });
 
   const socketRef = useRef<RadioSocket | null>(null);
   const audioRef = useRef<AudioManager | null>(null);
-  const toastTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
   const started = useRef(false);
+  // Refs to avoid stale closures in start()
+  const nowPlayingRef = useRef<NowPlaying | null>(null);
+  const serverElapsedRef = useRef(0);
 
-  // Clear toast after 3s
   const showToast = useCallback((msg: string) => {
-    setState((s) => ({ ...s, toast: msg }));
-    clearTimeout(toastTimer.current);
-    toastTimer.current = setTimeout(() => {
-      setState((s) => ({ ...s, toast: null }));
-    }, 3000);
+    toast(msg);
   }, []);
 
-  // Initialize audio manager
   useEffect(() => {
     const audio = new AudioManager({
-      onTimeUpdate: (elapsed, duration) => {
-        setState((s) => ({
-          ...s,
-          localElapsed: elapsed,
-          localDuration: duration,
-        }));
-      },
-      onEnded: () => {
-        socketRef.current?.send("track_ended");
-      },
+      onTimeUpdate: (elapsed, duration) => setState((s) => ({ ...s, elapsed, duration })),
+      onPlayStateChange: (isPlaying) => setState((s) => ({ ...s, isPlaying })),
+      onEnded: () => socketRef.current?.send("track_ended"),
       onError: () => {
         showToast("Track unavailable — skipping...");
         setTimeout(() => socketRef.current?.send("skip"), 3000);
@@ -104,21 +76,31 @@ export function useRadio() {
     return () => audio.destroy();
   }, [showToast]);
 
-  // Initialize WebSocket
   useEffect(() => {
+    const setupMedia = (np: NowPlaying) => {
+      audioRef.current?.setupMediaSession({
+        title: np.tags || "Personal Radio",
+        artist: `${np.bpm || "?"} BPM - ${np.key_scale || "?"}`,
+        onPlay: () => socketRef.current?.send("resume"),
+        onPause: () => socketRef.current?.send("pause"),
+        onNextTrack: () => socketRef.current?.send("skip"),
+      });
+    };
+
     const socket = new RadioSocket({
       onMessage: (msg) => {
         switch (msg.type) {
           case "sync":
+            nowPlayingRef.current = msg.data.now_playing;
+            serverElapsedRef.current = msg.data.playback?.elapsed || 0;
             setState((s) => ({
               ...s,
               radioName: msg.data.radio_name,
               isFirstRun: msg.data.is_first_run,
               nowPlaying: msg.data.now_playing,
-              playback: msg.data.playback || DEFAULT_PLAYBACK,
+              volume: msg.data.playback?.volume ?? s.volume,
               generating: msg.data.generating,
             }));
-            // If there's a track playing on server, play it in browser
             if (msg.data.now_playing?.audio_url && started.current) {
               audioRef.current?.playTrack(
                 msg.data.now_playing.audio_url,
@@ -128,36 +110,26 @@ export function useRadio() {
             break;
 
           case "now_playing":
+            nowPlayingRef.current = msg.data;
             setState((s) => ({ ...s, nowPlaying: msg.data }));
             if (started.current && msg.data.audio_url) {
-              // Use crossfade if already playing
-              if (audioRef.current?.hasSource && !audioRef.current?.paused) {
-                audioRef.current?.crossfadeTo(msg.data.audio_url);
+              const audio = audioRef.current;
+              if (audio?.hasSource && !audio.paused) {
+                audio.crossfadeTo(msg.data.audio_url);
               } else {
-                audioRef.current?.playTrack(msg.data.audio_url);
+                audio?.playTrack(msg.data.audio_url);
               }
-              // Update media session
-              const tags = msg.data.tags || "Personal Radio";
-              audioRef.current?.setupMediaSession({
-                title: tags,
-                artist: `${msg.data.bpm || "?"} BPM - ${msg.data.key_scale || "?"}`,
-                onPlay: () => socketRef.current?.send("resume"),
-                onPause: () => socketRef.current?.send("pause"),
-                onNextTrack: () => socketRef.current?.send("skip"),
-              });
+              setupMedia(msg.data);
             }
             break;
 
           case "playback_state":
-            setState((s) => ({ ...s, playback: msg.data }));
+            // Only sync volume — play/pause state is owned by audio element
+            setState((s) => ({ ...s, volume: msg.data.volume ?? s.volume }));
             break;
 
           case "tick":
-            // Server tick — we use local audio time, but update server state
-            setState((s) => ({
-              ...s,
-              playback: { ...s.playback, elapsed: msg.data.elapsed, duration: msg.data.duration },
-            }));
+            serverElapsedRef.current = msg.data.elapsed;
             break;
 
           case "generation_start":
@@ -170,19 +142,11 @@ export function useRadio() {
             break;
 
           case "generation_progress":
-            setState((s) => ({
-              ...s,
-              generationElapsed: msg.data.elapsed,
-            }));
+            setState((s) => ({ ...s, generationElapsed: msg.data.elapsed }));
             break;
 
           case "generation_done":
-            setState((s) => ({
-              ...s,
-              generating: false,
-              generationElapsed: 0,
-              generationParams: null,
-            }));
+            setState((s) => ({ ...s, generating: false, generationElapsed: 0, generationParams: null }));
             break;
 
           case "regenerating":
@@ -218,7 +182,6 @@ export function useRadio() {
             break;
 
           case "reaction_feedback":
-            // Brief visual feedback
             if (msg.data.signal === "liked") showToast("Liked!");
             else if (msg.data.signal === "disliked") showToast("Disliked — changing direction...");
             else if (msg.data.signal === "skipped") showToast("Skipped");
@@ -242,7 +205,6 @@ export function useRadio() {
     return () => socket.close();
   }, [showToast]);
 
-  // Actions
   const send = useCallback(
     (type: string, data?: Record<string, any>) => socketRef.current?.send(type, data),
     []
@@ -250,10 +212,9 @@ export function useRadio() {
 
   const start = useCallback(async () => {
     started.current = true;
-    // If we already have a track, start playing it
-    const np = state.nowPlaying;
+    const np = nowPlayingRef.current;
     if (np?.audio_url) {
-      await audioRef.current?.playTrack(np.audio_url, state.playback.elapsed || 0);
+      await audioRef.current?.playTrack(np.audio_url, serverElapsedRef.current || 0);
       audioRef.current?.setupMediaSession({
         title: np.tags || "Personal Radio",
         artist: `${np.bpm || "?"} BPM`,
@@ -262,11 +223,11 @@ export function useRadio() {
         onNextTrack: () => send("skip"),
       });
     }
-  }, [state.nowPlaying, state.playback.elapsed, send]);
+  }, [send]);
 
   const togglePause = useCallback(() => {
     if (audioRef.current?.paused) {
-      audioRef.current?.resume();
+      audioRef.current.resume();
       send("resume");
     } else {
       audioRef.current?.pause();
@@ -277,6 +238,7 @@ export function useRadio() {
   const setVolume = useCallback(
     (level: number) => {
       if (audioRef.current) audioRef.current.volume = level / 100;
+      setState((s) => ({ ...s, volume: level }));
       send("volume", { level });
     },
     [send]
@@ -290,22 +252,9 @@ export function useRadio() {
     [send]
   );
 
-  const seekTo = useCallback(
-    (time: number) => {
-      audioRef.current?.seek(time);
-    },
-    []
-  );
+  const seekTo = useCallback((time: number) => {
+    audioRef.current?.seek(time);
+  }, []);
 
-  return {
-    state,
-    start,
-    started: started.current,
-    send,
-    togglePause,
-    setVolume,
-    seekDelta,
-    seekTo,
-    audioRef,
-  };
+  return { state, start, started: started.current, send, togglePause, setVolume, seekDelta, seekTo };
 }

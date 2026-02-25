@@ -1,13 +1,15 @@
 /**
  * Full-screen "tap to start" — required for browser autoplay policy.
  */
+import { useState } from "react";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+
 type Props = {
   onStart: () => void;
   isFirstRun: boolean;
   onFirstVibe?: (text: string) => void;
 };
-
-import { useState } from "react";
 
 export default function StartScreen({ onStart, isFirstRun, onFirstVibe }: Props) {
   const [vibe, setVibe] = useState("");
@@ -28,22 +30,22 @@ export default function StartScreen({ onStart, isFirstRun, onFirstVibe }: Props)
       </p>
 
       {isFirstRun && (
-        <input
-          type="text"
+        <Input
           value={vibe}
           onChange={(e) => setVibe(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && handleStart()}
           placeholder="What's your vibe? (e.g., lo-fi beats, dark ambient)"
-          className="w-full max-w-sm mb-6 px-4 py-3 rounded-xl bg-surface-2 border border-neutral-700 text-white placeholder-neutral-500 focus:outline-none focus:border-accent"
+          className="w-full max-w-sm mb-6 bg-surface-2! border-neutral-700 text-white placeholder:text-neutral-500 focus-visible:ring-radio-accent"
         />
       )}
 
-      <button
+      <Button
         onClick={handleStart}
-        className="px-8 py-4 rounded-2xl bg-accent text-black font-semibold text-lg active:scale-95 transition-transform"
+        size="lg"
+        className="px-8 rounded-2xl text-lg font-semibold active:scale-95"
       >
         Start listening
-      </button>
+      </Button>
     </div>
   );
 }

@@ -1,7 +1,34 @@
 /**
  * Radio switcher — dropdown to switch/create/delete radios.
  */
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useState } from "react";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+} from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Button } from "@/components/ui/button";
+import { ChevronDown, Plus, Trash2 } from "lucide-react";
 
 type RadioInfo = {
   name: string;
@@ -19,133 +46,152 @@ type Props = {
 export default function RadioDropdown({ currentRadio, onSwitch, onCreate, onDelete }: Props) {
   const [open, setOpen] = useState(false);
   const [radios, setRadios] = useState<RadioInfo[]>([]);
-  const [creating, setCreating] = useState(false);
+  const [createOpen, setCreateOpen] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
   const [newName, setNewName] = useState("");
   const [newVibe, setNewVibe] = useState("");
-  const ref = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (open) {
       fetch("/api/radios")
         .then((r) => r.json())
-        .then((data) => setRadios(data.radios || []))
+        .then((data: { radios?: RadioInfo[] }) => setRadios(data.radios || []))
         .catch(() => {});
     }
   }, [open]);
-
-  // Close on outside click
-  useEffect(() => {
-    const handler = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) {
-        setOpen(false);
-        setCreating(false);
-      }
-    };
-    document.addEventListener("mousedown", handler);
-    return () => document.removeEventListener("mousedown", handler);
-  }, []);
 
   const handleCreate = () => {
     if (newName.trim()) {
       onCreate(newName.trim(), newVibe.trim());
       setNewName("");
       setNewVibe("");
-      setCreating(false);
-      setOpen(false);
+      setCreateOpen(false);
+    }
+  };
+
+  const handleDelete = () => {
+    if (deleteTarget) {
+      onDelete(deleteTarget);
+      setRadios((prev) => prev.filter((r) => r.name !== deleteTarget));
+      setDeleteTarget(null);
     }
   };
 
   return (
-    <div className="relative" ref={ref}>
-      <button
-        onClick={() => setOpen(!open)}
-        className="flex items-center gap-1 text-lg font-bold"
-      >
-        {currentRadio}
-        <span className="text-neutral-500 text-sm">&#9662;</span>
-      </button>
+    <>
+      <DropdownMenu open={open} onOpenChange={setOpen}>
+        <DropdownMenuTrigger asChild>
+          <Button variant="ghost" className="text-lg font-bold px-0 hover:bg-transparent gap-1">
+            {currentRadio}
+            <ChevronDown className="size-4 text-neutral-500" />
+          </Button>
+        </DropdownMenuTrigger>
 
-      {open && (
-        <div className="absolute top-full left-0 mt-2 w-64 bg-surface-2 border border-neutral-700 rounded-xl shadow-lg z-50 overflow-hidden">
+        <DropdownMenuContent className="w-64 bg-surface-2 border-neutral-700">
           {radios.map((r) => (
-            <div
+            <DropdownMenuItem
               key={r.name}
-              className={`flex items-center justify-between px-4 py-3 hover:bg-surface-3 cursor-pointer ${
-                r.is_current ? "text-accent" : ""
-              }`}
-            >
-              <button
-                className="flex-1 text-left"
-                onClick={() => {
+              className="flex items-center justify-between cursor-pointer"
+              onSelect={(e) => {
+                if (!r.is_current) {
+                  e.preventDefault();
                   onSwitch(r.name);
                   setOpen(false);
-                }}
-              >
-                <div className="font-medium">{r.name}</div>
-                <div className="text-xs text-neutral-500">{r.track_count} tracks</div>
-              </button>
+                } else {
+                  e.preventDefault();
+                }
+              }}
+            >
+              <div className="flex flex-col flex-1 min-w-0">
+                <span className={r.is_current ? "text-radio-accent font-medium" : ""}>{r.name}</span>
+                <span className="text-xs text-neutral-500">{r.track_count} tracks</span>
+              </div>
               {!r.is_current && (
-                <button
+                <Button
+                  variant="ghost"
+                  size="icon-xs"
                   onClick={(e) => {
                     e.stopPropagation();
-                    if (confirm(`Delete radio "${r.name}"?`)) {
-                      onDelete(r.name);
-                      setRadios((prev) => prev.filter((x) => x.name !== r.name));
-                    }
+                    setDeleteTarget(r.name);
+                    setOpen(false);
                   }}
-                  className="text-neutral-600 hover:text-dislike text-sm ml-2"
+                  className="text-neutral-600 hover:text-dislike hover:bg-transparent shrink-0"
                 >
-                  &#10007;
-                </button>
+                  <Trash2 className="size-3.5" />
+                </Button>
               )}
-            </div>
+            </DropdownMenuItem>
           ))}
 
-          <div className="border-t border-neutral-700">
-            {creating ? (
-              <div className="p-3 space-y-2">
-                <input
-                  type="text"
-                  value={newName}
-                  onChange={(e) => setNewName(e.target.value)}
-                  placeholder="Radio name"
-                  className="w-full px-3 py-1.5 rounded-lg bg-surface-3 border border-neutral-600 text-sm text-white placeholder-neutral-500 focus:outline-none"
-                  autoFocus
-                />
-                <input
-                  type="text"
-                  value={newVibe}
-                  onChange={(e) => setNewVibe(e.target.value)}
-                  onKeyDown={(e) => e.key === "Enter" && handleCreate()}
-                  placeholder="What's the vibe?"
-                  className="w-full px-3 py-1.5 rounded-lg bg-surface-3 border border-neutral-600 text-sm text-white placeholder-neutral-500 focus:outline-none"
-                />
-                <div className="flex gap-2">
-                  <button
-                    onClick={handleCreate}
-                    className="flex-1 py-1.5 rounded-lg bg-accent text-black text-sm font-medium"
-                  >
-                    Create
-                  </button>
-                  <button
-                    onClick={() => setCreating(false)}
-                    className="flex-1 py-1.5 rounded-lg bg-surface-3 text-neutral-400 text-sm"
-                  >
-                    Cancel
-                  </button>
-                </div>
-              </div>
-            ) : (
-              <button
-                onClick={() => setCreating(true)}
-                className="w-full px-4 py-3 text-left text-sm text-accent hover:bg-surface-3"
-              >
-                + New radio
-              </button>
-            )}
+          <DropdownMenuSeparator className="bg-neutral-700" />
+
+          <DropdownMenuItem
+            onSelect={(e) => {
+              e.preventDefault();
+              setCreateOpen(true);
+              setOpen(false);
+            }}
+            className="text-radio-accent cursor-pointer"
+          >
+            <Plus className="size-4" />
+            New radio
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
+
+      {/* Create radio dialog */}
+      <Dialog open={createOpen} onOpenChange={setCreateOpen}>
+        <DialogContent className="bg-surface-2 border-neutral-700 sm:max-w-sm">
+          <DialogHeader>
+            <DialogTitle>New radio</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            <Input
+              value={newName}
+              onChange={(e) => setNewName(e.target.value)}
+              placeholder="Radio name"
+              className="bg-surface-3! border-neutral-600 text-white placeholder:text-neutral-500"
+              autoFocus
+            />
+            <Input
+              value={newVibe}
+              onChange={(e) => setNewVibe(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && handleCreate()}
+              placeholder="What's the vibe?"
+              className="bg-surface-3! border-neutral-600 text-white placeholder:text-neutral-500"
+            />
           </div>
-        </div>
-      )}
-    </div>
+          <DialogFooter className="gap-2">
+            <Button variant="outline" className="border-neutral-600" onClick={() => setCreateOpen(false)}>
+              Cancel
+            </Button>
+            <Button onClick={handleCreate} disabled={!newName.trim()}>
+              Create
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Delete confirm dialog */}
+      <AlertDialog open={!!deleteTarget} onOpenChange={(v) => !v && setDeleteTarget(null)}>
+        <AlertDialogContent className="bg-surface-2 border-neutral-700">
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete radio?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Delete &ldquo;{deleteTarget}&rdquo;? All tracks and taste data will be removed.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel className="border-neutral-600">Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleDelete}
+              className="bg-destructive text-white hover:bg-destructive/90"
+            >
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </>
   );
 }

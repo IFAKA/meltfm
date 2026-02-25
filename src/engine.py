@@ -198,6 +198,11 @@ class RadioEngine:
         await self.state.broadcast("toast", {"message": f"Deleted radio '{name}'"})
         return True
 
+    async def clean_radio(self):
+        """Reset taste profile for the current radio."""
+        if self.radio:
+            self.radio.reset_taste()
+
     async def set_first_vibe(self, text: str):
         """Set initial direction for a new radio (first-run flow)."""
         if text:
@@ -210,11 +215,19 @@ class RadioEngine:
         """Graceful shutdown."""
         self._running = False
         self.player.stop()
+        self._reaction_event.set()
         if self._gen_task and not self._gen_task.done():
             self._gen_task.cancel()
+            try:
+                await self._gen_task
+            except (asyncio.CancelledError, Exception):
+                pass
         if self._tick_task and not self._tick_task.done():
             self._tick_task.cancel()
-        self._reaction_event.set()
+            try:
+                await self._tick_task
+            except (asyncio.CancelledError, Exception):
+                pass
 
     # ── Main loop ────────────────────────────────────────────────────────────
 

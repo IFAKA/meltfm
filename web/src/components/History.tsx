@@ -2,6 +2,7 @@
  * Recent tracks list with reaction indicators.
  */
 import { useEffect, useState } from "react";
+import { ScrollArea } from "@/components/ui/scroll-area";
 
 type HistoryItem = {
   id: string;
@@ -21,22 +22,14 @@ export default function History({ radioName }: Props) {
 
   useEffect(() => {
     setLoading(true);
-    fetch(`/api/radios/${encodeURIComponent(radioName)}/history?limit=10`)
+    fetch(`/api/radios/${encodeURIComponent(radioName)}/history?limit=20`)
       .then((r) => r.json())
-      .then((data) => {
+      .then((data: { history?: HistoryItem[] }) => {
         setItems(data.history || []);
         setLoading(false);
       })
       .catch(() => setLoading(false));
   }, [radioName]);
-
-  if (loading) {
-    return <div className="px-6 py-3 text-sm text-neutral-500">Loading...</div>;
-  }
-
-  if (items.length === 0) {
-    return <div className="px-6 py-3 text-sm text-neutral-500">No tracks yet</div>;
-  }
 
   const reactionIcon = (r: string) => {
     if (r === "liked") return <span className="text-like">&#9829;</span>;
@@ -46,20 +39,28 @@ export default function History({ radioName }: Props) {
   };
 
   return (
-    <div className="px-6 py-3">
-      <div className="text-xs text-neutral-500 uppercase tracking-wider mb-2">Recent</div>
-      <div className="space-y-1">
-        {items.map((item) => (
-          <div
-            key={item.id}
-            className="flex items-center gap-2 py-1.5 text-sm"
-          >
-            <span className="text-neutral-600 w-8 shrink-0">#{item.id}</span>
-            <span className="truncate flex-1 text-neutral-300">{item.tags}</span>
-            <span className="shrink-0">{reactionIcon(item.reaction)}</span>
+    <ScrollArea className="h-full">
+      <div className="px-6 py-3">
+        <div className="text-xs text-neutral-500 uppercase tracking-wider mb-2">Recent</div>
+        {loading ? (
+          <div className="text-sm text-neutral-500">Loading...</div>
+        ) : items.length === 0 ? (
+          <div className="text-sm text-neutral-500">No tracks yet</div>
+        ) : (
+          <div className="space-y-1">
+            {items.map((item) => (
+              <div
+                key={item.id}
+                className="flex items-center gap-2 py-1.5 text-sm"
+              >
+                <span className="text-neutral-600 w-8 shrink-0">#{item.id}</span>
+                <span className="truncate flex-1 text-neutral-300">{item.tags}</span>
+                <span className="shrink-0">{reactionIcon(item.reaction)}</span>
+              </div>
+            ))}
           </div>
-        ))}
+        )}
       </div>
-    </div>
+    </ScrollArea>
   );
 }

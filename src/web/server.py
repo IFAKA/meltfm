@@ -7,6 +7,8 @@ from pathlib import Path
 
 import httpx
 from starlette.applications import Starlette
+from starlette.middleware import Middleware
+from starlette.middleware.cors import CORSMiddleware
 from starlette.responses import JSONResponse, FileResponse, Response
 from starlette.routing import Route, WebSocketRoute, Mount
 from starlette.staticfiles import StaticFiles
@@ -24,6 +26,7 @@ logger = logging.getLogger(__name__)
 # Shared state
 _state = RadioState()
 _engine: RadioEngine | None = None
+_engine_task: "asyncio.Task | None" = None
 
 # Transfer tracking: client_id -> disconnect timer task
 _transfer_timers: dict[str, asyncio.Task] = {}
@@ -233,6 +236,10 @@ async def _handle_ws_message(client_id: str, data: dict):
         if name:
             await _engine.delete_radio(name)
 
+    elif msg_type == "clean_radio":
+        await _engine.clean_radio()
+        await _state.broadcast("toast", {"message": "Taste profile cleared"})
+
     elif msg_type == "first_vibe":
         text = data.get("text", "").strip()
         await _engine.set_first_vibe(text)
@@ -291,6 +298,14 @@ def create_app() -> Starlette:
 
     app = Starlette(
         routes=routes,
+        middleware=[
+            Middleware(
+                CORSMiddleware,
+                allow_origins=["*"],
+                allow_methods=["*"],
+                allow_headers=["*"],
+            )
+        ],
         on_startup=[_on_startup],
         on_shutdown=[_on_shutdown],
     )
@@ -300,13 +315,21 @@ def create_app() -> Starlette:
 
 async def _on_startup():
     """Start the radio engine as a background task."""
+    global _engine_task
     if _engine:
-        asyncio.create_task(_engine.run())
+        _engine_task = asyncio.create_task(_engine.run())
         logger.info("Radio engine started")
 
 
 async def _on_shutdown():
     """Graceful shutdown."""
+    global _engine_task
     if _engine:
         await _engine.stop()
         logger.info("Radio engine stopped")
+    if _engine_task and not _engine_task.done():
+        _engine_task.cancel()
+        try:
+            await _engine_task
+        except (asyncio.CancelledError, Exception):
+            pass

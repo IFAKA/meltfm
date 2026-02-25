@@ -1,7 +1,8 @@
 /**
- * Now playing — tags, metadata, progress bar.
+ * Now playing — tags, metadata, progress bar (shadcn Slider).
  */
-import type { NowPlaying as NowPlayingType } from "../hooks/useRadio";
+import type { NowPlaying as NowPlayingType } from "@/hooks/useRadio";
+import { Slider } from "@/components/ui/slider";
 
 type Props = {
   track: NowPlayingType | null;
@@ -26,15 +27,6 @@ export default function NowPlaying({ track, elapsed, duration, onSeek }: Props) 
   }
 
   const tags = track.tags || "generating...";
-  const progress = duration > 0 ? (elapsed / duration) * 100 : 0;
-
-  const handleProgressClick = (e: React.MouseEvent<HTMLDivElement>) => {
-    if (duration <= 0) return;
-    const rect = e.currentTarget.getBoundingClientRect();
-    const pct = (e.clientX - rect.left) / rect.width;
-    onSeek(pct * duration);
-  };
-
   const ts = track.time_signature || 4;
   const mode = track.instrumental ? "instrumental" : "vocal";
 
@@ -55,16 +47,15 @@ export default function NowPlaying({ track, elapsed, duration, onSeek }: Props) 
         </div>
       )}
 
-      {/* Progress bar */}
-      <div
-        className="w-full h-1.5 bg-neutral-700 rounded-full cursor-pointer mb-1 relative"
-        onClick={handleProgressClick}
-      >
-        <div
-          className="h-full bg-accent rounded-full transition-[width] duration-300"
-          style={{ width: `${Math.min(100, progress)}%` }}
-        />
-      </div>
+      {/* Progress slider — large touch target on mobile */}
+      <Slider
+        value={[elapsed]}
+        min={0}
+        max={duration > 0 ? duration : 1}
+        step={0.5}
+        onValueChange={([val]) => onSeek(val)}
+        className="w-full mb-2"
+      />
 
       {/* Times */}
       <div className="flex justify-between text-xs text-neutral-500">
