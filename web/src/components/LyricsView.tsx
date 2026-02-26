@@ -1,10 +1,11 @@
 /**
  * LyricsView — Spotify-like full-screen lyrics overlay.
  *
- * Since ACE-Step generates audio from lyrics but we have no word-level
- * timestamps, we estimate the current line by distributing content lines
- * proportionally across the track duration. Lines are weighted by word count
- * and section breaks get instrumental gap time to better match real singing.
+ * Two modes:
+ *  1. Exact (lyricsTimestamps available): renders Whisper-transcribed text with
+ *     real timestamps — matches exactly what was sung, syncs perfectly.
+ *  2. Fallback (first ~15-20s before transcription arrives): renders the written
+ *     lyrics with weighted proportional estimation.
  */
 import { useEffect, useRef, useMemo } from "react";
 import { ChevronDown } from "lucide-react";
@@ -45,13 +46,8 @@ function parseLyrics(raw: string): ParsedLine[] {
 }
 
 /**
- * Assign an estimated start time (in seconds) to each content line.
- *
- * Strategy:
- *  - Intro gap: 8% of duration before first lyric
- *  - Outro gap: 6% of duration after last lyric
- *  - Section breaks (between sections): 2.5% of duration each
- *  - Remaining time split proportionally by word count (longer lines = more time)
+ * Assign estimated start times to content lines (fallback only).
+ * Weighted by word count; sections get instrumental break time.
  */
 function buildLineTimes(lines: ParsedLine[], duration: number): number[] {
   if (duration <= 0) return lines.map(() => 0);
@@ -60,7 +56,6 @@ function buildLineTimes(lines: ParsedLine[], duration: number): number[] {
   const OUTRO = duration * 0.06;
   const SECTION_BREAK = duration * 0.025;
 
-  // Group content lines into sections
   type Segment = ContentLine[];
   const segments: Segment[] = [];
   let current: Segment = [];
@@ -74,15 +69,11 @@ function buildLineTimes(lines: ParsedLine[], duration: number): number[] {
   if (current.length > 0) segments.push(current);
 
   const numBreaks = Math.max(0, segments.length - 1);
-  const totalBreakTime = numBreaks * SECTION_BREAK;
-  const timeForLines = Math.max(0, duration - INTRO - OUTRO - totalBreakTime);
-
-  // Weight each line by word count (min 1)
+  const timeForLines = Math.max(0, duration - INTRO - OUTRO - numBreaks * SECTION_BREAK);
   const wordCount = (l: ContentLine) => Math.max(1, l.text.split(/\s+/).length);
   const allContent = segments.flat();
   const totalWeight = allContent.reduce((s, l) => s + wordCount(l), 0);
 
-  // Build a map: lineIndex -> start time
   const startTimes = new Map<number, number>();
   let t = INTRO;
   for (let si = 0; si < segments.length; si++) {
@@ -93,58 +84,56 @@ function buildLineTimes(lines: ParsedLine[], duration: number): number[] {
     }
   }
 
-  // Return flat array indexed by lineIndex
   const totalContent = allContent.length;
   return Array.from({ length: totalContent }, (_, i) => startTimes.get(i) ?? 0);
 }
 
 export default function LyricsView({ show, lyrics, elapsed, duration, trackTags, onClose, lyricsTimestamps }: Props) {
+  const hasExact = lyricsTimestamps != null && lyricsTimestamps.length > 0;
+
+  // Fallback: written lyrics parsed with section headers
   const lines = useMemo(() => parseLyrics(lyrics), [lyrics]);
   const totalLines = useMemo(() => lines.filter(l => l.kind === "content").length, [lines]);
-
-  // Estimated start time (seconds) for each content line (fallback only)
   const lineTimes = useMemo(() => buildLineTimes(lines, duration), [lines, duration]);
 
-  // Current line: prefer exact forced-alignment timestamps, fall back to estimation
   const currentLineIndex = useMemo(() => {
-    if (totalLines === 0) return -1;
-
-    // Exact timestamps from server (arrives ~10-20s after track starts)
-    if (lyricsTimestamps && lyricsTimestamps.length > 0) {
+    if (hasExact) {
+      // Exact mode: find last timestamp whose start <= elapsed
       let idx = -1;
-      for (let i = 0; i < lyricsTimestamps.length; i++) {
-        const ts = lyricsTimestamps[i];
+      for (let i = 0; i < lyricsTimestamps!.length; i++) {
+        const ts = lyricsTimestamps![i];
         if (ts.start !== null && elapsed >= ts.start) idx = i;
       }
       return idx;
     }
 
-    // Fallback: proportional estimation
-    if (duration <= 0) return -1;
+    // Fallback estimation
+    if (totalLines === 0 || duration <= 0) return -1;
     let idx = -1;
     for (let i = 0; i < totalLines; i++) {
       if (elapsed >= lineTimes[i]) idx = i;
     }
     return idx;
-  }, [elapsed, lineTimes, totalLines, duration, lyricsTimestamps]);
+  }, [elapsed, lineTimes, totalLines, duration, hasExact, lyricsTimestamps]);
 
   const lineRefs = useRef<(HTMLDivElement | null)[]>([]);
   const scrollRef = useRef<HTMLDivElement>(null);
+
+  // Clear stale refs when switching between exact and fallback mode
+  useEffect(() => {
+    lineRefs.current = [];
+  }, [hasExact]);
 
   // Auto-scroll to current line
   useEffect(() => {
     if (!show || currentLineIndex < 0) return;
     const el = lineRefs.current[currentLineIndex];
-    if (el) {
-      el.scrollIntoView({ behavior: "smooth", block: "center" });
-    }
+    if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
   }, [currentLineIndex, show]);
 
-  // Reset scroll when a new track loads
+  // Reset scroll on new track
   useEffect(() => {
-    if (show && scrollRef.current) {
-      scrollRef.current.scrollTop = 0;
-    }
+    if (show && scrollRef.current) scrollRef.current.scrollTop = 0;
   }, [lyrics]);
 
   return (
@@ -174,45 +163,66 @@ export default function LyricsView({ show, lyrics, elapsed, duration, trackTags,
       {/* Scroll container */}
       <div className="relative flex-1 min-h-0">
         <div ref={scrollRef} className="h-full overflow-y-auto px-8">
-          {/* Top padding so first line can appear centered */}
           <div className="h-[35vh]" />
 
-          {lines.map((line, i) => {
-            if (line.kind === "section") {
-              return (
-                <p
-                  key={i}
-                  className="text-[11px] text-white/20 uppercase tracking-[0.15em] font-semibold mb-2 mt-8"
-                >
-                  {line.text}
-                </p>
-              );
-            }
+          {hasExact
+            ? /* ── Exact mode: transcribed text + real timestamps ── */
+              lyricsTimestamps!.map((ts, i) => {
+                const isCurrent = i === currentLineIndex;
+                const isPast = i < currentLineIndex;
+                return (
+                  <div
+                    key={i}
+                    ref={el => { lineRefs.current[i] = el; }}
+                    className={[
+                      "font-bold leading-tight mb-5",
+                      "transition-all duration-700 ease-out",
+                      isCurrent
+                        ? "text-white text-[1.75rem] scale-[1.03] origin-left"
+                        : isPast
+                        ? "text-white/25 text-2xl"
+                        : "text-white/45 text-2xl",
+                    ].join(" ")}
+                  >
+                    {ts.text}
+                  </div>
+                );
+              })
+            : /* ── Fallback: written lyrics + estimation ── */
+              lines.map((line, i) => {
+                if (line.kind === "section") {
+                  return (
+                    <p
+                      key={i}
+                      className="text-[11px] text-white/20 uppercase tracking-[0.15em] font-semibold mb-2 mt-8"
+                    >
+                      {line.text}
+                    </p>
+                  );
+                }
+                const { lineIndex, text } = line;
+                const isCurrent = currentLineIndex >= 0 && lineIndex === currentLineIndex;
+                const isPast = currentLineIndex >= 0 && lineIndex < currentLineIndex;
+                return (
+                  <div
+                    key={i}
+                    ref={el => { lineRefs.current[lineIndex] = el; }}
+                    className={[
+                      "font-bold leading-tight mb-5",
+                      "transition-all duration-700 ease-out",
+                      isCurrent
+                        ? "text-white text-[1.75rem] scale-[1.03] origin-left"
+                        : isPast
+                        ? "text-white/25 text-2xl"
+                        : "text-white/45 text-2xl",
+                    ].join(" ")}
+                  >
+                    {text}
+                  </div>
+                );
+              })
+          }
 
-            const { lineIndex, text } = line;
-            const isCurrent = currentLineIndex >= 0 && lineIndex === currentLineIndex;
-            const isPast = currentLineIndex >= 0 && lineIndex < currentLineIndex;
-
-            return (
-              <div
-                key={i}
-                ref={el => { lineRefs.current[lineIndex] = el; }}
-                className={[
-                  "font-bold leading-tight mb-5",
-                  "transition-all duration-700 ease-out",
-                  isCurrent
-                    ? "text-white text-[1.75rem] scale-[1.03] origin-left"
-                    : isPast
-                    ? "text-white/25 text-2xl"
-                    : "text-white/45 text-2xl",
-                ].join(" ")}
-              >
-                {text}
-              </div>
-            );
-          })}
-
-          {/* Bottom padding */}
           <div className="h-[40vh]" />
         </div>
 
