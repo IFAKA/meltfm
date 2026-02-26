@@ -102,7 +102,7 @@ export default function History({ radioName, nowPlayingId, onPlayUrl }: Props) {
                   onClick={() => onPlayUrl(audioUrl(item))}
                   className="group w-full flex items-center gap-2 py-1.5 px-2 -mx-2 rounded text-sm hover:bg-neutral-800 transition-colors text-left"
                 >
-                  <span className="shrink-0 opacity-0 group-hover:opacity-100 transition-opacity text-radio-accent">
+                  <span className="shrink-0 opacity-30 group-hover:opacity-100 group-active:opacity-100 transition-opacity text-radio-accent">
                     <Play className="size-3.5" />
                   </span>
                   <span className="truncate flex-1 text-neutral-300 group-hover:text-white transition-colors">
