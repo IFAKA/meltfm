@@ -20,6 +20,7 @@ from .errors import format_error
 from .utils import friendly_redirect
 from .commands import check_disk, update_recipe, append_metric
 from .acestep import check_server as acestep_check_server, ensure_model as acestep_ensure_model
+from .alignment import align_lyrics
 
 logger = logging.getLogger(__name__)
 
@@ -452,6 +453,7 @@ class RadioEngine:
         await self.state.broadcast("now_playing", self._build_now_playing(params, next_path))
         await self.state.broadcast("generation_done", {})
         await self._broadcast_playback_state()
+        asyncio.create_task(self._align_and_broadcast(params, next_path))
         # Return immediately — main loop starts generating next track while this one plays
 
     async def _wait_with_playback(self, params, next_path, gen_start):
@@ -557,6 +559,7 @@ class RadioEngine:
             return
 
         self._commit_track(params, next_path, gen_start)
+        asyncio.create_task(self._align_and_broadcast(params, next_path))
 
         if not auto_advanced:
             self._queued_track = next_path
@@ -670,6 +673,7 @@ class RadioEngine:
         dur = get_audio_duration(next_path)
         self.player.play(next_path, duration=dur)
         self._commit_track(params, next_path, gen_start)
+        asyncio.create_task(self._align_and_broadcast(params, next_path))
         self._queued_track = next_path
         self._queued_params = params
         self._last_params = params
@@ -713,6 +717,37 @@ class RadioEngine:
             "bpm": params.get("bpm"),
             "instrumental": params.get("instrumental"),
         })
+
+    async def _align_and_broadcast(self, params: dict, track_path: Path):
+        """Background task: run forced alignment then broadcast lyrics_sync.
+
+        Fires after _commit_track. Never blocks playback.
+        Guard: only broadcasts if the track is still the queued/current track.
+        """
+        track_id = params.get("id")
+        is_instrumental = params.get("instrumental", True)
+        lyrics = params.get("lyrics", "") or ""
+
+        if is_instrumental or not lyrics or lyrics == "[inst]":
+            return
+
+        vocal_language = params.get("vocal_language", "en") or "en"
+
+        try:
+            timestamps = await align_lyrics(track_path, lyrics, vocal_language)
+        except Exception as e:
+            logger.error("_align_and_broadcast error for %s: %s", track_id, e)
+            return
+
+        if not timestamps:
+            return
+
+        # Only broadcast if this track is still the active one (not skipped mid-alignment)
+        if self._queued_params and self._queued_params.get("id") == track_id:
+            await self.state.broadcast("lyrics_sync", {
+                "track_id": track_id,
+                "timestamps": timestamps,
+            })
 
     def _build_now_playing(self, params: dict, track_path: Path) -> dict:
         """Build now-playing payload for WebSocket broadcast."""

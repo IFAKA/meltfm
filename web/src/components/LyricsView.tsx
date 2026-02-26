@@ -9,6 +9,12 @@
 import { useEffect, useRef, useMemo } from "react";
 import { ChevronDown } from "lucide-react";
 
+type LyricsTimestamp = {
+  text: string;
+  start: number | null;
+  end: number | null;
+};
+
 type Props = {
   show: boolean;
   lyrics: string;
@@ -16,6 +22,7 @@ type Props = {
   duration: number;
   trackTags: string;
   onClose: () => void;
+  lyricsTimestamps?: LyricsTimestamp[];
 };
 
 type SectionLine = { kind: "section"; text: string };
@@ -91,22 +98,35 @@ function buildLineTimes(lines: ParsedLine[], duration: number): number[] {
   return Array.from({ length: totalContent }, (_, i) => startTimes.get(i) ?? 0);
 }
 
-export default function LyricsView({ show, lyrics, elapsed, duration, trackTags, onClose }: Props) {
+export default function LyricsView({ show, lyrics, elapsed, duration, trackTags, onClose, lyricsTimestamps }: Props) {
   const lines = useMemo(() => parseLyrics(lyrics), [lyrics]);
   const totalLines = useMemo(() => lines.filter(l => l.kind === "content").length, [lines]);
 
-  // Estimated start time (seconds) for each content line
+  // Estimated start time (seconds) for each content line (fallback only)
   const lineTimes = useMemo(() => buildLineTimes(lines, duration), [lines, duration]);
 
-  // Current line = last line whose start time <= elapsed (or -1 before intro)
+  // Current line: prefer exact forced-alignment timestamps, fall back to estimation
   const currentLineIndex = useMemo(() => {
-    if (totalLines === 0 || duration <= 0) return -1;
+    if (totalLines === 0) return -1;
+
+    // Exact timestamps from server (arrives ~10-20s after track starts)
+    if (lyricsTimestamps && lyricsTimestamps.length > 0) {
+      let idx = -1;
+      for (let i = 0; i < lyricsTimestamps.length; i++) {
+        const ts = lyricsTimestamps[i];
+        if (ts.start !== null && elapsed >= ts.start) idx = i;
+      }
+      return idx;
+    }
+
+    // Fallback: proportional estimation
+    if (duration <= 0) return -1;
     let idx = -1;
     for (let i = 0; i < totalLines; i++) {
       if (elapsed >= lineTimes[i]) idx = i;
     }
     return idx;
-  }, [elapsed, lineTimes, totalLines, duration]);
+  }, [elapsed, lineTimes, totalLines, duration, lyricsTimestamps]);
 
   const lineRefs = useRef<(HTMLDivElement | null)[]>([]);
   const scrollRef = useRef<HTMLDivElement>(null);

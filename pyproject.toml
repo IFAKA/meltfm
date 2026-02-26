@@ -9,4 +9,6 @@ dependencies = [
     "uvicorn[standard]>=0.32.0",
     "websockets>=13.0",
     "sentence-transformers>=3.0.0",
+    # Forced lyrics alignment — requires PyTorch; remove if not needed
+    "stable-ts>=2.17.0",
 ]

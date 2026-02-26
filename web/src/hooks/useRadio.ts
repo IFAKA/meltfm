@@ -7,6 +7,12 @@ import { toast } from "sonner";
 import { RadioSocket } from "../lib/ws";
 import { AudioManager } from "../lib/audio";
 
+export type LyricsTimestamp = {
+  text: string;
+  start: number | null;
+  end: number | null;
+};
+
 export type NowPlaying = {
   id: string;
   tags: string;
@@ -19,6 +25,7 @@ export type NowPlaying = {
   duration: number | null;
   radio: string;
   lyrics?: string;
+  lyrics_timestamps?: LyricsTimestamp[];
 };
 
 /** Which phase of the generation pipeline is active. */
@@ -401,6 +408,21 @@ export function useRadio() {
               generating: true,
               pipeline: { stage: "waiting", llmDone: false, warnings: [], lastError: waitMsg },
             }));
+            break;
+          }
+
+          case "lyrics_sync": {
+            const { track_id, timestamps } = msg.data as {
+              track_id: string;
+              timestamps: LyricsTimestamp[];
+            };
+            setState((s) => {
+              if (s.nowPlaying?.id !== track_id) return s;
+              return {
+                ...s,
+                nowPlaying: { ...s.nowPlaying, lyrics_timestamps: timestamps },
+              };
+            });
             break;
           }
         }

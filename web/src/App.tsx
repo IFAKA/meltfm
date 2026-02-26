@@ -152,6 +152,7 @@ export default function App() {
         duration={state.duration}
         trackTags={state.nowPlaying?.tags ?? ""}
         onClose={() => setShowLyrics(false)}
+        lyricsTimestamps={state.nowPlaying?.lyrics_timestamps}
       />
 
       <ShareOverlay show={showShare} onClose={() => setShowShare(false)} />

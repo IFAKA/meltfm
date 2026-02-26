@@ -25,7 +25,7 @@ OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3.2:3b")
 OLLAMA_TIMEOUT = int(os.getenv("OLLAMA_TIMEOUT", "90"))
 
 # ─── Generation defaults ──────────────────────────────────────────────────────
-DEFAULT_DURATION = int(os.getenv("DEFAULT_DURATION", "120"))
+DEFAULT_DURATION = int(os.getenv("DEFAULT_DURATION", "180"))
 INFERENCE_STEPS = int(os.getenv("INFERENCE_STEPS", "8"))   # 8=turbo, 50=sft
 LM_TEMPERATURE = float(os.getenv("LM_TEMPERATURE", "0.7"))  # lower = more precise
 LM_CFG_SCALE = float(os.getenv("LM_CFG_SCALE", "3.0"))      # LM guidance strength
@@ -72,3 +72,8 @@ WEB_PORT = int(os.getenv("WEB_PORT", "8888"))
 
 # ─── Dev mode ─────────────────────────────────────────────────────────────────
 DEV_MODE = os.getenv("DEV_MODE", "1").strip() in ("1", "true", "yes")
+
+# ─── Lyrics alignment ─────────────────────────────────────────────────────────
+# Whisper model for lyrics forced alignment. "tiny" is fast (~10s/track on CPU).
+# Set to "" or "none" in .env to disable alignment (falls back to estimation).
+WHISPER_ALIGNMENT_MODEL = os.getenv("WHISPER_ALIGNMENT_MODEL", "tiny")
