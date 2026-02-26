@@ -48,6 +48,9 @@ class RadioEngine:
         self._pending_reaction: Optional[dict] = None
         self._reaction_event = asyncio.Event()
 
+        # Browser fires track_ended when audio loops — drives auto-advance
+        self._track_ended_event: asyncio.Event = asyncio.Event()
+
         # Track tick task
         self._tick_task: Optional[asyncio.Task] = None
         self._model_ensured = False
@@ -150,6 +153,11 @@ class RadioEngine:
         self.player.seek(delta)
         await self._broadcast_playback_state()
 
+    async def track_ended(self):
+        """Browser audio ended (first play or loop). Sync server timer and signal advance."""
+        self.player.replay()
+        self._track_ended_event.set()
+
     async def switch_radio(self, name: str) -> bool:
         """Switch to a different radio. Returns True if switched."""
         existing = self.manager.list_radios()
@@ -171,6 +179,7 @@ class RadioEngine:
         self._queued_track = None
         self._queued_params = None
         self._interrupt_when_ready = False
+        self._track_ended_event.clear()
 
         await self.state.broadcast("radio_switched", {
             "name": new_radio.name,
@@ -215,6 +224,7 @@ class RadioEngine:
             self._pending_reaction = None
             await self.state.broadcast("first_run", {"radio": self.radio.name})
             self._reaction_event.clear()
+            self._track_ended_event.clear()
 
     async def set_first_vibe(self, text: str):
         """Set initial direction for a new radio (first-run flow)."""
@@ -229,6 +239,7 @@ class RadioEngine:
         self._running = False
         self.player.stop()
         self._reaction_event.set()
+        self._track_ended_event.set()
         if self._gen_task and not self._gen_task.done():
             self._gen_task.cancel()
             try:
@@ -444,20 +455,31 @@ class RadioEngine:
         # Return immediately — main loop starts generating next track while this one plays
 
     async def _wait_with_playback(self, params, next_path, gen_start):
-        """Wait for generation while a track is playing. Handle auto-advance."""
+        """Wait for generation while a track is playing. Handle auto-advance.
+
+        Auto-advance rules:
+        - First play of current track: wait for browser to signal track_ended, THEN advance.
+        - Looping (track ended but next not ready): keep looping, advance at next track_ended.
+        - Dislike interrupt: switch immediately when next is ready, mid-play.
+        """
         auto_advanced = False
         reaction_broke = False
 
         async def _auto_advance():
             nonlocal auto_advanced
             while True:
-                # Poll every 0.3s; also wake early if gen done + interrupt flag set
-                while self.player.is_playing() or self.player.is_paused():
+                # Clear before waiting so we don't act on a stale signal
+                self._track_ended_event.clear()
+
+                # Wait for browser track_ended OR dislike interrupt
+                while not self._track_ended_event.is_set():
                     if self._gen_task.done() and self._interrupt_when_ready:
                         break
-                    await asyncio.sleep(0.3)
+                    if not self._running:
+                        return
+                    await asyncio.sleep(0.2)
 
-                # Gen finished while track was still playing (dislike interrupt-when-ready)
+                # Dislike: interrupt current track immediately when next is ready
                 if self._gen_task.done() and self._interrupt_when_ready:
                     self._interrupt_when_ready = False
                     success, _ = await self._get_gen_result()
@@ -472,8 +494,11 @@ class RadioEngine:
                         continue
                     return
 
-                # Track ended naturally
+                # track_ended fired — clear it and decide: advance or loop
+                self._track_ended_event.clear()
+
                 if self._gen_task.done():
+                    # Next track ready — auto-advance
                     success, _ = await self._get_gen_result()
                     if success and next_path.exists():
                         dur = get_audio_duration(next_path)
@@ -486,23 +511,19 @@ class RadioEngine:
                         continue
                     return
 
-                # Track ended but gen not done — loop current
-                if self._queued_track and self._queued_track.exists():
-                    self.player.replay()
+                # Next not ready — browser already looped (audio.ts loops on ended),
+                # server timer was reset by track_ended() calling player.replay().
+                # Just wait for the next track_ended signal.
 
         advance_task = asyncio.create_task(_auto_advance())
 
         # Monitor generation progress
         progress_task = asyncio.create_task(self._broadcast_gen_progress(gen_start))
 
-        # Wait for either: generation done + track ended, or user reaction
         self._reaction_event.clear()
 
         while self._running:
-            done_tasks = set()
-            waiters = [
-                asyncio.create_task(self._reaction_event.wait()),
-            ]
+            waiters = [asyncio.create_task(self._reaction_event.wait())]
             if not self._gen_task.done():
                 waiters.append(asyncio.shield(self._gen_task))
 
@@ -510,36 +531,31 @@ class RadioEngine:
             for p in pending:
                 p.cancel()
 
-            # Check if user reacted (discard/regenerate already handled in submit_reaction)
             if self._reaction_event.is_set():
                 self._reaction_event.clear()
                 reaction_broke = True
                 break
 
-            # Check if generation is done
-            if self._gen_task.done() and not auto_advanced:
-                # Wait for current track to end
-                if not self.player.is_playing() and not self.player.is_paused():
-                    break
-
             if auto_advanced:
+                break
+
+            # Fallback: gen done and player stopped (e.g. browser disconnected)
+            if self._gen_task.done() and not self.player.is_playing() and not self.player.is_paused():
                 break
 
         advance_task.cancel()
         progress_task.cancel()
 
         if not self._gen_task.done() or reaction_broke:
-            # User reacted — _discard_and_regenerate already cancelled gen and updated state
             return
 
         success, err = await self._get_gen_result()
         if not success:
             if err == "cancelled":
-                return  # cancelled by user reaction — main loop will restart
+                return
             await self._handle_gen_failure(params, next_path, err, gen_start)
             return
 
-        # Commit the track
         self._commit_track(params, next_path, gen_start)
 
         if not auto_advanced:
@@ -548,8 +564,6 @@ class RadioEngine:
 
         self._last_params = params
         self._recent_params = (self._recent_params + [params])[-5:]
-
-        # generation_done already broadcast by _broadcast_gen_progress; no duplicate here
 
     async def _wait_for_track_end(self):
         """Wait for the current track to end naturally or for user to react."""

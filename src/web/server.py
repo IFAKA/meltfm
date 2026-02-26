@@ -245,8 +245,8 @@ async def _handle_ws_message(client_id: str, data: dict):
         await _engine.set_first_vibe(text)
 
     elif msg_type == "track_ended":
-        # Browser audio ended — engine should advance
-        _engine._reaction_event.set()
+        # Browser audio ended — advance to next if ready, else loop
+        await _engine.track_ended()
 
     else:
         logger.warning("Unknown WS message type: %s", msg_type)
