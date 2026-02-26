@@ -101,10 +101,14 @@ async def radio_history(request):
     limit = int(request.query_params.get("limit", "20"))
     r = Radio(name)
     history = r.get_history(limit)
-    # Strip internal Path objects
-    for item in history:
-        item.pop("_mp3", None)
     return JSONResponse({"history": history})
+
+
+async def radio_favorites(request):
+    name = request.path_params["name"]
+    r = Radio(name)
+    favorites = r.get_favorites()
+    return JSONResponse({"favorites": favorites})
 
 
 # ── Audio serving ────────────────────────────────────────────────────────────
@@ -283,6 +287,7 @@ def create_app() -> Starlette:
         Route("/api/health", health),
         Route("/api/radios", list_radios),
         Route("/api/radios/{name}/history", radio_history),
+        Route("/api/radios/{name}/favorites", radio_favorites),
         Route("/audio/{radio}/{filename}", serve_audio),
         WebSocketRoute("/ws", websocket_endpoint),
     ]

@@ -463,5 +463,9 @@ export function useRadio() {
     audioRef.current?.seek(time);
   }, []);
 
-  return { state, start, started: started.current, send, togglePause, setVolume, seekDelta, seekTo };
+  const playUrl = useCallback((url: string) => {
+    audioRef.current?.playTrack(url);
+  }, []);
+
+  return { state, start, started: started.current, send, togglePause, setVolume, seekDelta, seekTo, playUrl };
 }

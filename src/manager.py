@@ -209,10 +209,26 @@ class Radio:
             if recipe_path.exists():
                 try:
                     recipe = json.loads(recipe_path.read_text())
-                    recipe["_mp3"] = str(mp3)
+                    recipe["filename"] = mp3.name
                     result.append(recipe)
                 except json.JSONDecodeError:
                     pass
+        return list(reversed(result))
+
+    def get_favorites(self, limit: int = 50) -> list[dict]:
+        """Return saved favorites with their recipe data."""
+        mp3s = sorted(self.favorites_dir.glob("*.mp3"), key=lambda p: p.stat().st_mtime)
+        result = []
+        for mp3 in mp3s[-limit:]:
+            recipe_path = mp3.with_suffix(".json")
+            recipe: dict = {"filename": mp3.name, "tags": mp3.stem, "reaction": "liked"}
+            if recipe_path.exists():
+                try:
+                    recipe = json.loads(recipe_path.read_text())
+                    recipe["filename"] = mp3.name
+                except json.JSONDecodeError:
+                    pass
+            result.append(recipe)
         return list(reversed(result))
 
     def disk_free_mb(self) -> float:

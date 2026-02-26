@@ -14,7 +14,7 @@ import ShareOverlay from "./components/ShareOverlay";
 import CleanDataDialog from "./components/CleanDataDialog";
 
 export default function App() {
-  const { state, start, send, togglePause, setVolume, seekTo } = useRadio();
+  const { state, start, send, togglePause, setVolume, seekTo, playUrl } = useRadio();
   const [showStart, setShowStart] = useState(true);
   const [showShare, setShowShare] = useState(false);
   const [showClean, setShowClean] = useState(false);
@@ -96,7 +96,7 @@ export default function App() {
 
           {/* History: inline on mobile, hidden on desktop (shown in right panel) */}
           <div className="md:hidden">
-            <History radioName={state.radioName} nowPlayingId={state.nowPlaying?.id} />
+            <History radioName={state.radioName} nowPlayingId={state.nowPlaying?.id} onPlayUrl={playUrl} />
           </div>
 
           {/* DevPanel + Event log: inline on mobile (collapsed by default), hidden on desktop */}
@@ -128,7 +128,7 @@ export default function App() {
       {/* ── Right panel — desktop only ── */}
       <div className="hidden md:flex md:flex-col border-l border-neutral-800 overflow-hidden">
         <div className="flex-1 min-h-0 overflow-y-auto">
-          <History radioName={state.radioName} nowPlayingId={state.nowPlaying?.id} />
+          <History radioName={state.radioName} nowPlayingId={state.nowPlaying?.id} onPlayUrl={playUrl} />
         </div>
         <DevPanel {...devPanelProps} />
         <EventLog events={state.events} />
