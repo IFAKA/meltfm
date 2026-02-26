@@ -18,7 +18,7 @@ ERRORS_LOG = OUTPUT_DIR / "errors.log"
 # ─── External services ────────────────────────────────────────────────────────
 ACESTEP_HOST = os.getenv("ACESTEP_HOST", "http://localhost:8001").rstrip("/")
 ACESTEP_TIMEOUT = int(os.getenv("ACESTEP_TIMEOUT", "600"))
-ACESTEP_MODEL = os.getenv("ACESTEP_MODEL", "acestep/acestep-v15-turbo")
+ACESTEP_MODEL = os.getenv("ACESTEP_MODEL", "acestep/acestep-v15-turbo-shift3")
 
 OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://localhost:11434").rstrip("/")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3.2:3b")

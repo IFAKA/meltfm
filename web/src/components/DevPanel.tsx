@@ -7,6 +7,7 @@ import type { PipelineState, PipelineStage } from "@/hooks/useRadio";
 
 const STAGE_LABEL: Record<PipelineStage, string> = {
   idle: "Idle",
+  waiting: "Waiting",
   thinking: "Thinking",
   generating: "Generating",
   ready: "Ready",
@@ -15,6 +16,7 @@ const STAGE_LABEL: Record<PipelineStage, string> = {
 
 const STAGE_CLS: Record<PipelineStage, string> = {
   idle: "bg-neutral-800 text-neutral-400",
+  waiting: "bg-yellow-950 text-yellow-400",
   thinking: "bg-cyan-950 text-cyan-400",
   generating: "bg-cyan-950 text-cyan-400",
   ready: "bg-green-950 text-green-400",

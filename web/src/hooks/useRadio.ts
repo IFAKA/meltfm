@@ -21,7 +21,7 @@ export type NowPlaying = {
 };
 
 /** Which phase of the generation pipeline is active. */
-export type PipelineStage = "idle" | "thinking" | "generating" | "ready" | "error";
+export type PipelineStage = "idle" | "waiting" | "thinking" | "generating" | "ready" | "error";
 
 export type PipelineState = {
   stage: PipelineStage;
@@ -392,6 +392,16 @@ export function useRadio() {
             audioRef.current?.pause();
             showToast("Sleep timer expired");
             break;
+
+          case "waiting": {
+            const waitMsg: string = msg.data.message || "Waiting…";
+            setState((s) => ({
+              ...s,
+              generating: true,
+              pipeline: { stage: "waiting", llmDone: false, warnings: [], lastError: waitMsg },
+            }));
+            break;
+          }
         }
       },
       onOpen: () => setState((s) => ({ ...s, connected: true })),

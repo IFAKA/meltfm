@@ -319,7 +319,7 @@ class RadioEngine:
         # ── Check ACE-Step is up before burning LLM tokens ───────────────
         if not await acestep_check_server():
             self._model_ensured = False  # reset so we re-activate after restart
-            await self.state.broadcast("error", {"message": "ACE-Step not available, retrying in 15s..."})
+            await self.state.broadcast("waiting", {"message": "ACE-Step starting up…"})
             await asyncio.sleep(15)
             return
         if not self._model_ensured:

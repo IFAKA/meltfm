@@ -65,6 +65,18 @@ export default function GenerationBadge({ generating, queueReady, elapsed, param
     );
   }
 
+  // ACE-Step starting up — show a soft waiting state
+  if (pipeline.stage === "waiting") {
+    return (
+      <div className="mx-6 mb-3 rounded-lg border border-neutral-800 bg-neutral-900/60 overflow-hidden">
+        <div className="flex items-center gap-2 px-3 py-2">
+          <span className="w-1.5 h-1.5 rounded-full bg-radio-accent animate-pulse shrink-0" />
+          <span className="text-sm text-neutral-500 italic">{pipeline.lastError ?? "Starting up…"}</span>
+        </div>
+      </div>
+    );
+  }
+
   // Still generating — show live progress
   const llmStatus: StepStatus =
     pipeline.stage === "error" && !pipeline.llmDone ? "error" :
