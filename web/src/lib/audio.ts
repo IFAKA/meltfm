@@ -20,11 +20,37 @@ export class AudioManager {
   private wakeLock: WakeLockSentinel | null = null;
   private _suppressNextPause = false;
 
+  // Web Audio API — for real-time frequency analysis
+  private audioCtx: AudioContext | null = null;
+  private analyserNode: AnalyserNode | null = null;
+  private readonly _connectedEls = new WeakSet<HTMLAudioElement>();
+
   constructor(callbacks: AudioCallbacks = {}) {
     this.audio = new Audio();
     this.audio.preload = "auto";
     this.callbacks = callbacks;
     this._attach(this.audio);
+  }
+
+  private _initAudioContext() {
+    if (this.audioCtx) return;
+    this.audioCtx = new AudioContext();
+    this.analyserNode = this.audioCtx.createAnalyser();
+    this.analyserNode.fftSize = 256;               // 128 frequency bins
+    this.analyserNode.smoothingTimeConstant = 0.75;
+    this.analyserNode.connect(this.audioCtx.destination);
+  }
+
+  private _connectElement(el: HTMLAudioElement) {
+    if (!this.audioCtx || !this.analyserNode) return;
+    if (this._connectedEls.has(el)) return;        // can only call createMediaElementSource once per element
+    const src = this.audioCtx.createMediaElementSource(el);
+    src.connect(this.analyserNode);
+    this._connectedEls.add(el);
+  }
+
+  get analyser(): AnalyserNode | null {
+    return this.analyserNode;
   }
 
   private _attach(el: HTMLAudioElement) {
@@ -48,6 +74,8 @@ export class AudioManager {
   }
 
   async playTrack(url: string, seekTo?: number) {
+    this._initAudioContext();
+    this._connectElement(this.audio);
     this.audio.src = url;
     this.audio.volume = this._volume;
     if (seekTo) this.audio.currentTime = seekTo;
@@ -64,6 +92,9 @@ export class AudioManager {
     const next = new Audio(nextUrl);
     next.volume = 0;
     next.preload = "auto";
+
+    // Connect to Web Audio graph before playing so frequency data is available
+    this._connectElement(next);
 
     try {
       await next.play();
@@ -149,6 +180,7 @@ export class AudioManager {
   destroy() {
     this.audio.pause();
     this.audio.removeAttribute("src");
+    this.audioCtx?.close();
     this.wakeLock?.release().catch(() => {});
   }
 }

@@ -417,6 +417,8 @@ export function useRadio() {
     []
   );
 
+  const getAnalyser = useCallback(() => audioRef.current?.analyser ?? null, []);
+
   const start = useCallback(async () => {
     started.current = true;
     const np = nowPlayingRef.current;
@@ -467,5 +469,5 @@ export function useRadio() {
     audioRef.current?.playTrack(url);
   }, []);
 
-  return { state, start, started: started.current, send, togglePause, setVolume, seekDelta, seekTo, playUrl };
+  return { state, start, started: started.current, send, togglePause, setVolume, seekDelta, seekTo, playUrl, getAnalyser };
 }

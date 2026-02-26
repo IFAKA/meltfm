@@ -14,7 +14,7 @@ import ShareOverlay from "./components/ShareOverlay";
 import CleanDataDialog from "./components/CleanDataDialog";
 
 export default function App() {
-  const { state, start, send, togglePause, setVolume, seekTo, playUrl } = useRadio();
+  const { state, start, send, togglePause, setVolume, seekTo, playUrl, getAnalyser } = useRadio();
   const [showStart, setShowStart] = useState(true);
   const [showShare, setShowShare] = useState(false);
   const [showClean, setShowClean] = useState(false);
@@ -58,7 +58,7 @@ export default function App() {
             onDelete={(name) => send("delete_radio", { name })}
           />
           <div className="flex-1 flex justify-center">
-            <AudioVisualizer isPlaying={state.isPlaying} />
+            <AudioVisualizer isPlaying={state.isPlaying} getAnalyser={getAnalyser} />
           </div>
           <div className="flex items-center gap-3">
             <span
