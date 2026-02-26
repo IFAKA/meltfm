@@ -507,13 +507,12 @@ class RadioEngine:
                         return
                     await asyncio.sleep(0.2)
 
-                # Dislike: interrupt current track immediately — skip alignment
-                # (user wants instant change; lyrics button stays hidden for this track)
+                # Dislike: interrupt current track — run alignment then play
                 if self._gen_task.done() and self._interrupt_when_ready:
                     self._interrupt_when_ready = False
                     success, _ = await self._get_gen_result()
                     if success and next_path.exists():
-                        params["lyrics_timestamps"] = None
+                        await self._run_alignment(params, next_path)
                         dur = get_audio_duration(next_path)
                         self.player.play(next_path, duration=dur)
                         self._queued_track = next_path
