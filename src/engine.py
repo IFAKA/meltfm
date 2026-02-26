@@ -104,30 +104,30 @@ class RadioEngine:
             await self.pause()
 
     async def skip(self):
-        """Skip current track.
+        """Skip to the next track — never regenerates, always advances.
 
-        If the next track is already generated and ready, play it immediately.
-        If still generating, discard and regenerate fresh.
+        Ready: play immediately.
+        Still generating: stop current, play as soon as generation finishes.
         """
-        if (self._gen_task and self._gen_task.done()
-                and self._next_path and self._next_path.exists()):
-            # Next track ready — advance immediately without regenerating
-            await self.state.broadcast("reaction_feedback", {"signal": "skipped"})
-            if self._queued_params:
-                self.radio.add_reaction(self._queued_params, "skipped")
-                if self._queued_track:
-                    jpath = self._queued_track.with_suffix(".json")
-                    if jpath.exists():
-                        update_recipe(jpath, {"reaction": "skipped"})
-            self.player.stop()
-            await self._broadcast_playback_state()
-            self._track_ended_event.set()  # triggers _auto_advance to play the ready track
-        else:
-            # Still generating — discard and regenerate
-            reaction = {"signal": "skipped", "modifiers": [], "mood": None,
-                        "direction": None, "command": None, "raw": "skip"}
-            await self.state.broadcast("reaction_feedback", {"signal": "skipped"})
-            await self._discard_and_regenerate(reaction, "skip")
+        await self.state.broadcast("reaction_feedback", {"signal": "skipped"})
+
+        # Record current track as skipped
+        if self._queued_params:
+            self.radio.add_reaction(self._queued_params, "skipped")
+            if self._queued_track:
+                jpath = self._queued_track.with_suffix(".json")
+                if jpath.exists():
+                    update_recipe(jpath, {"reaction": "skipped"})
+
+        self.player.stop()
+        await self._broadcast_playback_state()
+
+        if self._gen_task and self._gen_task.done() and self._next_path and self._next_path.exists():
+            # Next track ready — trigger _auto_advance to play it now
+            self._track_ended_event.set()
+        elif self._gen_task and not self._gen_task.done():
+            # Still generating — play as soon as it finishes (reuse dislike interrupt path)
+            self._interrupt_when_ready = True
 
     async def save(self):
         """Save current track to favorites."""
@@ -738,17 +738,19 @@ class RadioEngine:
         })
 
     async def _align_and_broadcast(self, params: dict, track_path: Path):
-        """Background task: run forced alignment then broadcast lyrics_sync.
+        """Background task: transcribe audio then broadcast lyrics_sync.
 
         Fires after _commit_track. Never blocks playback.
-        Guard: only broadcasts if the track is still the queued/current track.
+        Always broadcasts for vocal tracks — null timestamps signals failure
+        so the frontend knows to hide the lyrics button rather than spin forever.
+        Skips entirely for instrumental tracks (no lyrics button shown).
         """
         track_id = params.get("id")
         is_instrumental = params.get("instrumental", True)
         lyrics = params.get("lyrics", "") or ""
 
         if is_instrumental or not lyrics or lyrics == "[inst]":
-            return
+            return  # instrumental — frontend never shows lyrics button
 
         vocal_language = params.get("vocal_language", "en") or "en"
 
@@ -756,16 +758,14 @@ class RadioEngine:
             timestamps = await align_lyrics(track_path, lyrics, vocal_language)
         except Exception as e:
             logger.error("_align_and_broadcast error for %s: %s", track_id, e)
-            return
+            timestamps = []
 
-        if not timestamps:
-            return
-
-        # Only broadcast if this track is still the active one (not skipped mid-alignment)
+        # Always broadcast for vocal tracks so the frontend can stop the spinner.
+        # timestamps=None means failed/unavailable → button hidden.
         if self._queued_params and self._queued_params.get("id") == track_id:
             await self.state.broadcast("lyrics_sync", {
                 "track_id": track_id,
-                "timestamps": timestamps,
+                "timestamps": timestamps if timestamps else None,
             })
 
     def _build_now_playing(self, params: dict, track_path: Path) -> dict:
