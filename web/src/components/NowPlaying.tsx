@@ -3,7 +3,7 @@
  */
 import type { NowPlaying as NowPlayingType } from "@/hooks/useRadio";
 import { Slider } from "@/components/ui/slider";
-import { Mic } from "lucide-react";
+import { Mic, Loader2 } from "lucide-react";
 
 type Props = {
   track: NowPlayingType | null;
@@ -63,8 +63,17 @@ export default function NowPlaying({ track, elapsed, duration, onSeek, onShowLyr
       <div className="flex justify-between items-center text-xs text-neutral-500">
         <span>{fmtTime(elapsed)}</span>
 
-        {/* Lyrics button — vocal tracks only */}
-        {!track.instrumental && track.lyrics && onShowLyrics && (
+        {/* Lyrics button — vocal tracks only, 3 states:
+            undefined = transcribing (spinner)
+            null      = failed (hidden)
+            array     = ready (clickable) */}
+        {!track.instrumental && track.lyrics_timestamps === undefined && (
+          <span className="flex items-center gap-1 text-neutral-600" title="Syncing lyrics…">
+            <Loader2 className="size-3 animate-spin" />
+            <span>Lyrics</span>
+          </span>
+        )}
+        {!track.instrumental && Array.isArray(track.lyrics_timestamps) && onShowLyrics && (
           <button
             onClick={onShowLyrics}
             className="flex items-center gap-1 text-neutral-500 hover:text-white transition-colors active:scale-95"

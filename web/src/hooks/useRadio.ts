@@ -25,7 +25,10 @@ export type NowPlaying = {
   duration: number | null;
   radio: string;
   lyrics?: string;
-  lyrics_timestamps?: LyricsTimestamp[];
+  // undefined = vocal track, transcription in progress (show spinner)
+  // null       = transcription failed (hide lyrics button)
+  // array      = ready (show lyrics button)
+  lyrics_timestamps?: LyricsTimestamp[] | null;
 };
 
 /** Which phase of the generation pipeline is active. */

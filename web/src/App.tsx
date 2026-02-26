@@ -147,12 +147,11 @@ export default function App() {
       {/* Overlays */}
       <LyricsView
         show={showLyrics}
-        lyrics={state.nowPlaying?.lyrics ?? ""}
+        trackId={state.nowPlaying?.id ?? ""}
         elapsed={state.elapsed}
-        duration={state.duration}
         trackTags={state.nowPlaying?.tags ?? ""}
         onClose={() => setShowLyrics(false)}
-        lyricsTimestamps={state.nowPlaying?.lyrics_timestamps}
+        lyricsTimestamps={state.nowPlaying?.lyrics_timestamps ?? []}
       />
 
       <ShareOverlay show={showShare} onClose={() => setShowShare(false)} />
