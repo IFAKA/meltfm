@@ -18,6 +18,7 @@ export type NowPlaying = {
   audio_url: string;
   duration: number | null;
   radio: string;
+  lyrics?: string;
 };
 
 /** Which phase of the generation pipeline is active. */

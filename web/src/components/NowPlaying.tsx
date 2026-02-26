@@ -3,12 +3,14 @@
  */
 import type { NowPlaying as NowPlayingType } from "@/hooks/useRadio";
 import { Slider } from "@/components/ui/slider";
+import { Mic } from "lucide-react";
 
 type Props = {
   track: NowPlayingType | null;
   elapsed: number;
   duration: number;
   onSeek: (time: number) => void;
+  onShowLyrics?: () => void;
 };
 
 function fmtTime(s: number): string {
@@ -17,7 +19,7 @@ function fmtTime(s: number): string {
   return `${m}:${sec.toString().padStart(2, "0")}`;
 }
 
-export default function NowPlaying({ track, elapsed, duration, onSeek }: Props) {
+export default function NowPlaying({ track, elapsed, duration, onSeek, onShowLyrics }: Props) {
   if (!track) {
     return (
       <div className="px-6 py-8 text-center text-neutral-500">
@@ -57,9 +59,22 @@ export default function NowPlaying({ track, elapsed, duration, onSeek }: Props) 
         className="w-full mb-2"
       />
 
-      {/* Times */}
-      <div className="flex justify-between text-xs text-neutral-500">
+      {/* Times + lyrics button */}
+      <div className="flex justify-between items-center text-xs text-neutral-500">
         <span>{fmtTime(elapsed)}</span>
+
+        {/* Lyrics button — vocal tracks only */}
+        {!track.instrumental && track.lyrics && onShowLyrics && (
+          <button
+            onClick={onShowLyrics}
+            className="flex items-center gap-1 text-neutral-500 hover:text-white transition-colors active:scale-95"
+            title="Show lyrics"
+          >
+            <Mic className="size-3" />
+            <span>Lyrics</span>
+          </button>
+        )}
+
         <span>{duration > 0 ? fmtTime(duration) : "--:--"}</span>
       </div>
     </div>

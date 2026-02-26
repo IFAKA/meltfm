@@ -716,17 +716,21 @@ class RadioEngine:
 
     def _build_now_playing(self, params: dict, track_path: Path) -> dict:
         """Build now-playing payload for WebSocket broadcast."""
+        raw_lyrics = params.get("lyrics", "") or ""
+        is_instrumental = params.get("instrumental", False)
+        lyrics = raw_lyrics if not is_instrumental and raw_lyrics not in ("", "[inst]") else ""
         return {
             "id": params.get("id"),
             "tags": params.get("tags", ""),
             "bpm": params.get("bpm"),
             "key_scale": params.get("key_scale"),
             "time_signature": params.get("time_signature"),
-            "instrumental": params.get("instrumental"),
+            "instrumental": is_instrumental,
             "rationale": params.get("rationale", ""),
             "radio": params.get("radio", ""),
             "audio_url": f"/audio/{self.radio.name}/{track_path.name}",
             "duration": self.player.duration,
+            "lyrics": lyrics,
         }
 
     async def _broadcast_playback_state(self):

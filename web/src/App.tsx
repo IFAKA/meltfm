@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import { useRadio } from "./hooks/useRadio";
 import StartScreen from "./components/StartScreen";
 import NowPlaying from "./components/NowPlaying";
@@ -12,12 +12,21 @@ import RadioDropdown from "./components/RadioDropdown";
 import AudioVisualizer from "./components/AudioVisualizer";
 import ShareOverlay from "./components/ShareOverlay";
 import CleanDataDialog from "./components/CleanDataDialog";
+import LyricsView from "./components/LyricsView";
 
 export default function App() {
   const { state, start, send, togglePause, setVolume, seekTo, playUrl, getAnalyser } = useRadio();
   const [showStart, setShowStart] = useState(true);
   const [showShare, setShowShare] = useState(false);
   const [showClean, setShowClean] = useState(false);
+  const [showLyrics, setShowLyrics] = useState(false);
+
+  // Close lyrics view when track changes to one without lyrics
+  useEffect(() => {
+    if (showLyrics && !state.nowPlaying?.lyrics) {
+      setShowLyrics(false);
+    }
+  }, [state.nowPlaying?.id]);
 
   const handleStart = useCallback(async () => {
     await start();
@@ -82,6 +91,7 @@ export default function App() {
             elapsed={state.elapsed}
             duration={state.duration}
             onSeek={seekTo}
+            onShowLyrics={state.nowPlaying?.lyrics ? () => setShowLyrics(true) : undefined}
           />
 
           <GenerationBadge
@@ -135,6 +145,15 @@ export default function App() {
       </div>
 
       {/* Overlays */}
+      <LyricsView
+        show={showLyrics}
+        lyrics={state.nowPlaying?.lyrics ?? ""}
+        elapsed={state.elapsed}
+        duration={state.duration}
+        trackTags={state.nowPlaying?.tags ?? ""}
+        onClose={() => setShowLyrics(false)}
+      />
+
       <ShareOverlay show={showShare} onClose={() => setShowShare(false)} />
 
       <CleanDataDialog
