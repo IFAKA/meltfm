@@ -104,11 +104,30 @@ class RadioEngine:
             await self.pause()
 
     async def skip(self):
-        """Skip current track — discard queue and regenerate."""
-        reaction = {"signal": "skipped", "modifiers": [], "mood": None,
-                    "direction": None, "command": None, "raw": "skip"}
-        await self.state.broadcast("reaction_feedback", {"signal": "skipped"})
-        await self._discard_and_regenerate(reaction, "skip")
+        """Skip current track.
+
+        If the next track is already generated and ready, play it immediately.
+        If still generating, discard and regenerate fresh.
+        """
+        if (self._gen_task and self._gen_task.done()
+                and self._next_path and self._next_path.exists()):
+            # Next track ready — advance immediately without regenerating
+            await self.state.broadcast("reaction_feedback", {"signal": "skipped"})
+            if self._queued_params:
+                self.radio.add_reaction(self._queued_params, "skipped")
+                if self._queued_track:
+                    jpath = self._queued_track.with_suffix(".json")
+                    if jpath.exists():
+                        update_recipe(jpath, {"reaction": "skipped"})
+            self.player.stop()
+            await self._broadcast_playback_state()
+            self._track_ended_event.set()  # triggers _auto_advance to play the ready track
+        else:
+            # Still generating — discard and regenerate
+            reaction = {"signal": "skipped", "modifiers": [], "mood": None,
+                        "direction": None, "command": None, "raw": "skip"}
+            await self.state.broadcast("reaction_feedback", {"signal": "skipped"})
+            await self._discard_and_regenerate(reaction, "skip")
 
     async def save(self):
         """Save current track to favorites."""
