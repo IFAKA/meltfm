@@ -78,10 +78,10 @@ async def generate_track(params: dict, output_path) -> tuple[bool, str]:
         "audio_config": audio_config,
         "seed": params.get("seed", -1),
         "inference_steps": INFERENCE_STEPS,
-        # Use 5Hz LM to generate semantic audio codes (lm-dit pipeline, max quality)
-        "thinking": True,
-        "use_cot_caption": True,
-        "use_cot_language": True,
+        # thinking/CoT: True = higher quality but slower; False = faster generation
+        "thinking": False,
+        "use_cot_caption": False,
+        "use_cot_language": False,
         # LM planner quality — tighter semantic blueprint
         "lm_temperature": LM_TEMPERATURE,
         "lm_cfg_scale": LM_CFG_SCALE,
