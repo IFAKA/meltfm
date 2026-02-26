@@ -198,6 +198,9 @@ export function useRadio() {
             setState((s) => ({
               ...s,
               nowPlaying: np,
+              // Reset elapsed so LyricsView doesn't inherit the old track's position
+              // during the ~500ms crossfade before the new audio element fires timeupdate.
+              elapsed: 0,
               queueReady: false,
               generationParams: null,
               pipeline: { ...s.pipeline, stage: "idle", llmDone: false },

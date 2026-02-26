@@ -7,12 +7,7 @@
  */
 import { useEffect, useRef, useMemo } from "react";
 import { ChevronDown } from "lucide-react";
-
-export type LyricsTimestamp = {
-  text: string;
-  start: number | null;
-  end: number | null;
-};
+import type { LyricsTimestamp } from "../hooks/useRadio";
 
 type Props = {
   show: boolean;
@@ -24,14 +19,25 @@ type Props = {
 };
 
 export default function LyricsView({ show, trackId, elapsed, trackTags, onClose, lyricsTimestamps }: Props) {
-  // Current line = last timestamp whose start <= elapsed
-  const currentLineIndex = useMemo(() => {
-    let idx = -1;
-    for (let i = 0; i < lyricsTimestamps.length; i++) {
+  // currentLineIndex: segment actively being sung (-1 = none).
+  // pivotIndex: last segment that has started — used to split past/future when
+  //             currentLineIndex is -1 (in a gap: segments ≤ pivot are "past").
+  const { currentLineIndex, pivotIndex } = useMemo(() => {
+    for (let i = lyricsTimestamps.length - 1; i >= 0; i--) {
       const ts = lyricsTimestamps[i];
-      if (ts.start !== null && elapsed >= ts.start) idx = i;
+      if (ts.start === null || elapsed < ts.start) continue;
+      // elapsed >= ts.start — this is the latest segment that has started.
+      // If ts.end is set and elapsed is past it, check if we're in a gap.
+      if (ts.end !== null && elapsed >= ts.end) {
+        const nextStart = lyricsTimestamps[i + 1]?.start;
+        if (nextStart != null && elapsed < nextStart) {
+          // In a gap: segment i has ended, segment i+1 hasn't started yet.
+          return { currentLineIndex: -1, pivotIndex: i };
+        }
+      }
+      return { currentLineIndex: i, pivotIndex: i };
     }
-    return idx;
+    return { currentLineIndex: -1, pivotIndex: -1 };
   }, [elapsed, lyricsTimestamps]);
 
   const lineRefs = useRef<(HTMLDivElement | null)[]>([]);
@@ -81,7 +87,8 @@ export default function LyricsView({ show, trackId, elapsed, trackTags, onClose,
 
           {lyricsTimestamps.map((ts, i) => {
             const isCurrent = i === currentLineIndex;
-            const isPast = i < currentLineIndex;
+            // During a gap (currentLineIndex = -1), segments up to pivotIndex are past.
+            const isPast = currentLineIndex >= 0 ? i < currentLineIndex : i <= pivotIndex;
             return (
               <div
                 key={i}

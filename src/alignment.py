@@ -1,14 +1,18 @@
-"""Lyrics transcription — gets exact timestamps for what was actually sung.
+"""Lyrics alignment — gets exact timestamps for each line of the written lyrics.
 
-Uses stable-ts (Whisper) to transcribe the generated audio. The transcribed
-text IS the source of truth — it matches what you hear, not what was written.
-Segments are broadcast as lyrics_sync and replace the written lyrics in the UI.
+Uses stable-ts (Whisper) to align the written lyrics against the generated audio.
+model.align() is used when available: it takes the written lyrics as reference and
+finds exactly when each phrase appears in the audio, producing accurate per-line
+timestamps that match what the user sees in the LyricsView.
+
+Falls back to model.transcribe() if align() is unavailable or fails.
 
 Lazy-loads Whisper model on first call; cached for the process lifetime.
 Returns [] if stable-ts is not installed or WHISPER_ALIGNMENT_MODEL is empty.
 """
 import asyncio
 import logging
+import re
 from pathlib import Path
 from typing import Optional
 
@@ -65,17 +69,36 @@ _LANG_MAP: dict[str, Optional[str]] = {
     "unknown": None,  # auto-detect
 }
 
+# Matches section markers like [Verse 1], [Chorus], [Bridge - whispered], etc.
+_SECTION_MARKER_RE = re.compile(r"^\[.*\]$")
+
+
+def _strip_section_markers(lyrics: str) -> str:
+    """Remove section/structural markers before passing lyrics to align().
+
+    Markers like [Verse 1] or [Chorus] are LLM/ACE-Step formatting — Whisper
+    never hears them, so including them confuses forced alignment.
+    """
+    lines = [
+        line for line in lyrics.splitlines()
+        if line.strip() and not _SECTION_MARKER_RE.match(line.strip())
+    ]
+    return "\n".join(lines)
+
 
 async def align_lyrics(
     audio_path: Path,
     lyrics: str,
     vocal_language: Optional[str] = "en",
 ) -> list[dict]:
-    """Transcribe audio and return line-level timestamps of what was actually sung.
+    """Align written lyrics to audio and return per-segment timestamps.
+
+    Uses model.align() (forced alignment) when available: maps written lyrics
+    to the audio timeline, giving accurate timestamps for each line.
+    Falls back to model.transcribe() if align() is unavailable.
 
     Returns list of {text, start, end} dicts — one per Whisper segment.
-    The text is the transcribed lyric (what was sung), not the written lyric.
-    Returns [] on any failure; LyricsView falls back to estimation.
+    Returns [] on any failure.
     """
     if not audio_path.exists():
         return []
@@ -88,8 +111,19 @@ async def align_lyrics(
 
     try:
         loop = asyncio.get_event_loop()
+        clean_lyrics = _strip_section_markers(lyrics)
 
         def _run():
+            # Prefer forced alignment: align written lyrics to audio for accurate
+            # per-line timestamps. Falls back to transcription if unavailable.
+            if clean_lyrics and hasattr(model, "align"):
+                try:
+                    return model.align(str(audio_path), clean_lyrics, language=lang)
+                except Exception as align_err:
+                    logger.warning(
+                        "align() failed for %s (%s) — falling back to transcribe",
+                        audio_path.name, align_err,
+                    )
             return model.transcribe(str(audio_path), language=lang)
 
         result = await loop.run_in_executor(None, _run)

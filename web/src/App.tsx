@@ -21,9 +21,10 @@ export default function App() {
   const [showClean, setShowClean] = useState(false);
   const [showLyrics, setShowLyrics] = useState(false);
 
-  // Close lyrics view when track changes to one without lyrics
+  // Close lyrics view when track changes to one without usable timestamps.
+  // Check lyrics_timestamps (what the button requires), not lyrics text.
   useEffect(() => {
-    if (showLyrics && !state.nowPlaying?.lyrics) {
+    if (showLyrics && !Array.isArray(state.nowPlaying?.lyrics_timestamps)) {
       setShowLyrics(false);
     }
   }, [state.nowPlaying?.id]);
