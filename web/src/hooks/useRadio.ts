@@ -185,7 +185,7 @@ export function useRadio() {
             break;
 
           case "now_playing": {
-            const np = msg.data as NowPlaying;
+            const np = msg.data as NowPlaying; // includes lyrics_timestamps from pipeline
             const tag0 = np.tags?.split(",")[0]?.trim() ?? "track";
             const npEvt = mkEvent(
               "now_playing",
@@ -414,20 +414,6 @@ export function useRadio() {
             break;
           }
 
-          case "lyrics_sync": {
-            const { track_id, timestamps } = msg.data as {
-              track_id: string;
-              timestamps: LyricsTimestamp[];
-            };
-            setState((s) => {
-              if (s.nowPlaying?.id !== track_id) return s;
-              return {
-                ...s,
-                nowPlaying: { ...s.nowPlaying, lyrics_timestamps: timestamps },
-              };
-            });
-            break;
-          }
         }
       },
       onOpen: () => setState((s) => ({ ...s, connected: true })),

@@ -433,18 +433,21 @@ class RadioEngine:
             await self._wait_for_generation(params, next_path, gen_start)
 
     async def _wait_for_generation(self, params, next_path, gen_start):
-        """Wait for generation with no music playing (first track or after failure)."""
-        # Loop current if available
+        """Wait for generation with no music playing (first track or after failure).
+
+        Pipeline: ACE-Step → Whisper alignment → play.
+        Progress counter keeps ticking through both phases.
+        """
         looper = None
         if self.player.current_track:
             looper = asyncio.create_task(self._loop_current())
 
         try:
+            # Phase 1: ACE-Step
             while not self._gen_task.done():
                 await asyncio.sleep(0.5)
-                elapsed = time.monotonic() - gen_start
                 await self.state.broadcast("generation_progress", {
-                    "elapsed": round(elapsed, 1),
+                    "elapsed": round(time.monotonic() - gen_start, 1),
                 })
         finally:
             if looper and not looper.done():
@@ -453,11 +456,20 @@ class RadioEngine:
         success, err = await self._get_gen_result()
         if not success:
             if err == "cancelled":
-                return  # cancelled by user reaction — main loop will restart
+                return
             await self._handle_gen_failure(params, next_path, err, gen_start)
             return
 
-        # Play the freshly generated track
+        # Phase 2: Whisper alignment (vocal tracks only — keep progress ticking)
+        align_task = asyncio.create_task(self._run_alignment(params, next_path))
+        while not align_task.done():
+            await asyncio.sleep(0.5)
+            await self.state.broadcast("generation_progress", {
+                "elapsed": round(time.monotonic() - gen_start, 1),
+            })
+        await align_task
+
+        # Phase 3: Play — track is fully ready (audio + lyrics)
         dur = get_audio_duration(next_path)
         self.player.play(next_path, duration=dur)
         self._commit_track(params, next_path, gen_start)
@@ -469,8 +481,6 @@ class RadioEngine:
         await self.state.broadcast("now_playing", self._build_now_playing(params, next_path))
         await self.state.broadcast("generation_done", {})
         await self._broadcast_playback_state()
-        asyncio.create_task(self._align_and_broadcast(params, next_path))
-        # Return immediately — main loop starts generating next track while this one plays
 
     async def _wait_with_playback(self, params, next_path, gen_start):
         """Wait for generation while a track is playing. Handle auto-advance.
@@ -497,11 +507,13 @@ class RadioEngine:
                         return
                     await asyncio.sleep(0.2)
 
-                # Dislike: interrupt current track immediately when next is ready
+                # Dislike: interrupt current track immediately — skip alignment
+                # (user wants instant change; lyrics button stays hidden for this track)
                 if self._gen_task.done() and self._interrupt_when_ready:
                     self._interrupt_when_ready = False
                     success, _ = await self._get_gen_result()
                     if success and next_path.exists():
+                        params["lyrics_timestamps"] = None
                         dur = get_audio_duration(next_path)
                         self.player.play(next_path, duration=dur)
                         self._queued_track = next_path
@@ -516,9 +528,11 @@ class RadioEngine:
                 self._track_ended_event.clear()
 
                 if self._gen_task.done():
-                    # Next track ready — auto-advance
+                    # Next track ready — run alignment then advance
+                    # Current track loops while Whisper transcribes (~15-20s)
                     success, _ = await self._get_gen_result()
                     if success and next_path.exists():
+                        await self._run_alignment(params, next_path)
                         dur = get_audio_duration(next_path)
                         self.player.play(next_path, duration=dur)
                         self._queued_track = next_path
@@ -575,9 +589,10 @@ class RadioEngine:
             return
 
         self._commit_track(params, next_path, gen_start)
-        asyncio.create_task(self._align_and_broadcast(params, next_path))
 
         if not auto_advanced:
+            # Track not yet played — run alignment now so it's ready when played
+            await self._run_alignment(params, next_path)
             self._queued_track = next_path
             self._queued_params = params
 
@@ -685,11 +700,11 @@ class RadioEngine:
             await asyncio.sleep(15)
             return
 
-        # Retry succeeded
+        # Retry succeeded — run alignment before playing
+        await self._run_alignment(params, next_path)
         dur = get_audio_duration(next_path)
         self.player.play(next_path, duration=dur)
         self._commit_track(params, next_path, gen_start)
-        asyncio.create_task(self._align_and_broadcast(params, next_path))
         self._queued_track = next_path
         self._queued_params = params
         self._last_params = params
@@ -734,36 +749,25 @@ class RadioEngine:
             "instrumental": params.get("instrumental"),
         })
 
-    async def _align_and_broadcast(self, params: dict, track_path: Path):
-        """Background task: transcribe audio then broadcast lyrics_sync.
+    async def _run_alignment(self, params: dict, track_path: Path) -> None:
+        """Transcribe vocal track and store timestamps in params dict.
 
-        Fires after _commit_track. Never blocks playback.
-        Always broadcasts for vocal tracks — null timestamps signals failure
-        so the frontend knows to hide the lyrics button rather than spin forever.
-        Skips entirely for instrumental tracks (no lyrics button shown).
+        Sets params['lyrics_timestamps'] = list[dict] or None.
+        Called inline in the pipeline — blocks until transcription is done.
+        Skips silently for instrumental tracks.
         """
-        track_id = params.get("id")
         is_instrumental = params.get("instrumental", True)
         lyrics = params.get("lyrics", "") or ""
-
         if is_instrumental or not lyrics or lyrics == "[inst]":
-            return  # instrumental — frontend never shows lyrics button
-
+            params["lyrics_timestamps"] = None
+            return
         vocal_language = params.get("vocal_language", "en") or "en"
-
         try:
             timestamps = await align_lyrics(track_path, lyrics, vocal_language)
+            params["lyrics_timestamps"] = timestamps if timestamps else None
         except Exception as e:
-            logger.error("_align_and_broadcast error for %s: %s", track_id, e)
-            timestamps = []
-
-        # Always broadcast for vocal tracks so the frontend can stop the spinner.
-        # timestamps=None means failed/unavailable → button hidden.
-        if self._queued_params and self._queued_params.get("id") == track_id:
-            await self.state.broadcast("lyrics_sync", {
-                "track_id": track_id,
-                "timestamps": timestamps if timestamps else None,
-            })
+            logger.error("Alignment error for %s: %s", params.get("id"), e)
+            params["lyrics_timestamps"] = None
 
     def _build_now_playing(self, params: dict, track_path: Path) -> dict:
         """Build now-playing payload for WebSocket broadcast."""
@@ -782,6 +786,8 @@ class RadioEngine:
             "audio_url": f"/audio/{self.radio.name}/{track_path.name}",
             "duration": self.player.duration,
             "lyrics": lyrics,
+            # None for instrumentals/failed; list when transcription succeeded
+            "lyrics_timestamps": params.get("lyrics_timestamps"),
         }
 
     async def _broadcast_playback_state(self):
