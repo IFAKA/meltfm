@@ -3,7 +3,8 @@
  *
  * Since ACE-Step generates audio from lyrics but we have no word-level
  * timestamps, we estimate the current line by distributing content lines
- * proportionally across the track duration (with a small leading gap).
+ * proportionally across the track duration. Lines are weighted by word count
+ * and section breaks get instrumental gap time to better match real singing.
  */
 import { useEffect, useRef, useMemo } from "react";
 import { ChevronDown } from "lucide-react";
@@ -36,22 +37,83 @@ function parseLyrics(raw: string): ParsedLine[] {
   return out;
 }
 
+/**
+ * Assign an estimated start time (in seconds) to each content line.
+ *
+ * Strategy:
+ *  - Intro gap: 8% of duration before first lyric
+ *  - Outro gap: 6% of duration after last lyric
+ *  - Section breaks (between sections): 2.5% of duration each
+ *  - Remaining time split proportionally by word count (longer lines = more time)
+ */
+function buildLineTimes(lines: ParsedLine[], duration: number): number[] {
+  if (duration <= 0) return lines.map(() => 0);
+
+  const INTRO = duration * 0.08;
+  const OUTRO = duration * 0.06;
+  const SECTION_BREAK = duration * 0.025;
+
+  // Group content lines into sections
+  type Segment = ContentLine[];
+  const segments: Segment[] = [];
+  let current: Segment = [];
+  for (const line of lines) {
+    if (line.kind === "section") {
+      if (current.length > 0) { segments.push(current); current = []; }
+    } else {
+      current.push(line);
+    }
+  }
+  if (current.length > 0) segments.push(current);
+
+  const numBreaks = Math.max(0, segments.length - 1);
+  const totalBreakTime = numBreaks * SECTION_BREAK;
+  const timeForLines = Math.max(0, duration - INTRO - OUTRO - totalBreakTime);
+
+  // Weight each line by word count (min 1)
+  const wordCount = (l: ContentLine) => Math.max(1, l.text.split(/\s+/).length);
+  const allContent = segments.flat();
+  const totalWeight = allContent.reduce((s, l) => s + wordCount(l), 0);
+
+  // Build a map: lineIndex -> start time
+  const startTimes = new Map<number, number>();
+  let t = INTRO;
+  for (let si = 0; si < segments.length; si++) {
+    if (si > 0) t += SECTION_BREAK;
+    for (const line of segments[si]) {
+      startTimes.set(line.lineIndex, t);
+      t += (wordCount(line) / totalWeight) * timeForLines;
+    }
+  }
+
+  // Return flat array indexed by lineIndex
+  const totalContent = allContent.length;
+  return Array.from({ length: totalContent }, (_, i) => startTimes.get(i) ?? 0);
+}
+
 export default function LyricsView({ show, lyrics, elapsed, duration, trackTags, onClose }: Props) {
   const lines = useMemo(() => parseLyrics(lyrics), [lyrics]);
   const totalLines = useMemo(() => lines.filter(l => l.kind === "content").length, [lines]);
 
-  // Distribute content lines across ~94% of track duration (skip first/last ~3%)
-  const progress = duration > 0
-    ? Math.max(0, Math.min(1, (elapsed - duration * 0.03) / (duration * 0.94)))
-    : 0;
-  const currentLineIndex = Math.min(Math.floor(progress * totalLines), totalLines - 1);
+  // Estimated start time (seconds) for each content line
+  const lineTimes = useMemo(() => buildLineTimes(lines, duration), [lines, duration]);
+
+  // Current line = last line whose start time <= elapsed (or -1 before intro)
+  const currentLineIndex = useMemo(() => {
+    if (totalLines === 0 || duration <= 0) return -1;
+    let idx = -1;
+    for (let i = 0; i < totalLines; i++) {
+      if (elapsed >= lineTimes[i]) idx = i;
+    }
+    return idx;
+  }, [elapsed, lineTimes, totalLines, duration]);
 
   const lineRefs = useRef<(HTMLDivElement | null)[]>([]);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   // Auto-scroll to current line
   useEffect(() => {
-    if (!show) return;
+    if (!show || currentLineIndex < 0) return;
     const el = lineRefs.current[currentLineIndex];
     if (el) {
       el.scrollIntoView({ behavior: "smooth", block: "center" });
@@ -108,8 +170,8 @@ export default function LyricsView({ show, lyrics, elapsed, duration, trackTags,
             }
 
             const { lineIndex, text } = line;
-            const isCurrent = lineIndex === currentLineIndex;
-            const isPast = lineIndex < currentLineIndex;
+            const isCurrent = currentLineIndex >= 0 && lineIndex === currentLineIndex;
+            const isPast = currentLineIndex >= 0 && lineIndex < currentLineIndex;
 
             return (
               <div
