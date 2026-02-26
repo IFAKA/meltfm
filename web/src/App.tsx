@@ -121,6 +121,7 @@ export default function App() {
 
         <Controls
           isPlaying={state.isPlaying}
+          generating={state.generating}
           volume={state.volume}
           onTogglePause={togglePause}
           onSkip={() => send("skip")}

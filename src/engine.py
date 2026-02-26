@@ -125,9 +125,6 @@ class RadioEngine:
         if self._gen_task and self._gen_task.done() and self._next_path and self._next_path.exists():
             # Next track ready — trigger _auto_advance to play it now
             self._track_ended_event.set()
-        elif self._gen_task and not self._gen_task.done():
-            # Still generating — play as soon as it finishes (reuse dislike interrupt path)
-            self._interrupt_when_ready = True
 
     async def save(self):
         """Save current track to favorites."""

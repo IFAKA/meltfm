@@ -7,6 +7,7 @@ import { X, Play, Pause, SkipForward, Heart, Bookmark, Volume2, RotateCcw } from
 
 type Props = {
   isPlaying: boolean;
+  generating: boolean;
   volume: number;
   onTogglePause: () => void;
   onSkip: () => void;
@@ -19,6 +20,7 @@ type Props = {
 
 export default function Controls({
   isPlaying,
+  generating,
   volume,
   onTogglePause,
   onSkip,
@@ -64,8 +66,9 @@ export default function Controls({
           variant="ghost"
           size="icon-lg"
           onClick={onSkip}
-          className="text-neutral-400 hover:text-white hover:bg-transparent active:scale-90 transition-all"
-          title="Skip"
+          disabled={generating}
+          className="text-neutral-400 hover:text-white hover:bg-transparent active:scale-90 transition-all disabled:opacity-30 disabled:cursor-not-allowed"
+          title={generating ? "Generating next track…" : "Skip"}
         >
           <SkipForward className="size-6" />
         </Button>
